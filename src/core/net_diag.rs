@@ -783,6 +783,32 @@ pub fn flush_dns() -> bool {
     netsh::flush_dns().success
 }
 
+/// traceroute 到目标（最多 8 跳），返回逐跳信息（实时路径探测）。
+pub async fn traceroute(host: &str) -> Vec<String> {
+    let host = host.to_string();
+    tokio::task::spawn_blocking(move || {
+        let out = run(
+            "tracert",
+            &["-d", "-h", "8", "-w", "800", &host],
+            std::time::Duration::from_secs(25),
+        );
+        out.stdout
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| {
+                !l.is_empty()
+                    && (l.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                        || l.contains('*')
+                        || l.contains("超过")
+                        || l.contains("over")
+                        || l.contains("timed out"))
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

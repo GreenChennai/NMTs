@@ -2,7 +2,7 @@
   <h1 align="center">NMTs · 网络维护工具集</h1>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.0-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.7.0-orange.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/lang-Rust-DEA584.svg" alt="Language">
   <img src="https://img.shields.io/badge/UI-ratatui%20%2B%20crossterm-4D4D4D.svg" alt="UI">
@@ -41,7 +41,7 @@
 | v1.4.0 | 配置备份支持设备 running-config | ✅ 完成 |
 | v1.5.0 | 拓扑编辑器外置（React Flow + Python 独立窗口） | ✅ 完成 |
 | v1.6.0 | 统一组件规范收口 + 回归测试 + 安装包 | ✅ 完成 |
-| v1.7.0 | 多网卡深化 + EventBus + 诊断实时化 | ⏳ |
+| v1.7.0 | 多网卡深化 + EventBus + 诊断实时化 | ✅ 完成 |
 | v1.8.0 | 配置漂移闭环 + 脚本中心 + 帮助引导 | ⏳ |
 | v2.0.0 | 大版本收口：报告导出 + 定时巡检 + 撤销审计 + 跨模块联动 | ⏳ |
 

@@ -492,6 +492,11 @@ impl App {
                     self.execute_auto_fixes();
                 }
             }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                if self.tab == 0 {
+                    self.trace_route();
+                }
+            }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 if self.tab == 3 {
                     self.topo_deploy();
@@ -1068,6 +1073,18 @@ impl App {
             },
             Err(_) => self.topo.status = Some("未找到 topology.json，请先打开编辑器保存".into()),
         }
+    }
+
+    /// 诊断实时化：路由追踪到公网（异步，结果追加到日志）。
+    fn trace_route(&mut self) {
+        let tx = self.tx.clone();
+        self.diag.logs.push("路由追踪：tracert 223.5.5.5（最多 8 跳）…".into());
+        self.rt.spawn(async move {
+            let hops = crate::core::net_diag::traceroute("223.5.5.5").await;
+            for h in hops {
+                let _ = tx.send(DiagEvent::Log(format!("  {h}")));
+            }
+        });
     }
 
     /// 诊断→修复闭环：执行所有「自动修复」项。

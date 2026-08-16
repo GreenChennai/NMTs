@@ -23,11 +23,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(" 诊断进行中…", Style::default().fg(Color::Yellow))
     } else if app.diag.started {
         Span::styled(
-            " 诊断完成，按 R 重新运行 · F 执行自动修复",
+            " 诊断完成，按 R 重新运行 · F 自动修复 · T 路由追踪",
             Style::default().fg(Color::DarkGray),
         )
     } else {
-        Span::styled(" 按 Enter / R 开始诊断", Style::default().fg(Color::Cyan))
+        Span::styled(" 按 Enter / R 开始诊断 · T 路由追踪", Style::default().fg(Color::Cyan))
     };
     f.render_widget(Paragraph::new(Line::from(hint)), chunks[0]);
 
@@ -38,7 +38,10 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     .split(chunks[1]);
 
     draw_check_list(f, app, body[0]);
-    draw_log(f, app, body[1]);
+    let right = Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(body[1]);
+    draw_log(f, app, right[0]);
+    draw_adapters(f, app, right[1]);
 }
 
 fn draw_check_list(f: &mut Frame, app: &mut App, area: Rect) {
@@ -98,6 +101,30 @@ fn draw_log(f: &mut Frame, app: &App, area: Rect) {
 
     let p = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(" 实时日志 "))
+        .wrap(Wrap { trim: true });
+    f.render_widget(p, area);
+}
+
+/// 多网卡列表（多网卡场景可见，虚拟 / VPN 标记）。
+fn draw_adapters(f: &mut Frame, app: &App, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    if app.adapters.is_empty() {
+        lines.push(Line::from(Span::styled(" （未检测到网卡）", Style::default().fg(Color::DarkGray))));
+    } else {
+        for a in app.adapters.iter().take(8) {
+            let color = if a.is_virtual() { Color::Yellow } else { Color::White };
+            let mark = if a.is_virtual() { format!(" [{}]", a.kind_label()) } else { String::new() };
+            let up = if a.is_up() { "↑" } else { "↓" };
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {up} "), Style::default().fg(if a.is_up() { Color::Green } else { Color::DarkGray })),
+                Span::styled(a.name.clone(), Style::default().fg(color)),
+                Span::styled(mark, Style::default().fg(Color::Yellow)),
+            ]));
+        }
+    }
+
+    let p = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" 网卡列表 "))
         .wrap(Wrap { trim: true });
     f.render_widget(p, area);
 }
