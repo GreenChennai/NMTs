@@ -370,7 +370,7 @@ impl App {
     fn on_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('q') | KeyCode::Char('Q') => self.running = false,
-            KeyCode::Char('h') | KeyCode::Char('?') => self.show_help = !self.show_help,
+            KeyCode::Char('h') | KeyCode::Char('?') | KeyCode::F(1) => self.show_help = !self.show_help,
             KeyCode::Esc => {
                 if self.show_help {
                     self.show_help = false;

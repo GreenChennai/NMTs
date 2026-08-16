@@ -144,24 +144,30 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 fn draw_help(f: &mut Frame, area: ratatui::layout::Rect) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled("  快捷键", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  Enter / R    运行诊断（模块一）/ 执行选中项"),
-        Line::from("  ← / →       切换模块"),
-        Line::from("  [ / ]        网工终端：切换厂商"),
-        Line::from("  F            诊断完成后：执行自动修复"),
-        Line::from("  E / D        拓扑：导出 D2 / 下发 CLI"),
-        Line::from("  H            显示 / 隐藏帮助"),
-        Line::from("  Q / Esc      退出（Esc 仅关闭帮助）"),
+        Line::from(Span::styled("  全局快捷键", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from("  ← / →       切换模块　Tab 亦可"),
+        Line::from("  H            显示 / 隐藏帮助　Q 退出"),
+        Line::from(""),
+        Line::from(Span::styled("  模块一 诊断", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from("  Enter / R    运行诊断　F 自动修复　T 路由追踪"),
+        Line::from(""),
+        Line::from(Span::styled("  模块二 快捷设置", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from("  ↑/↓ 选择　Enter 执行　Esc 退出表单/排名"),
+        Line::from(""),
+        Line::from(Span::styled("  模块三 网工工具", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from("  Enter 扫描连接　[ / ] 切厂商　I 输入模式　S 切波特率"),
+        Line::from(""),
+        Line::from(Span::styled("  模块四 拓扑", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from("  ↑/↓ 选设备　Enter 生成 CLI　O 打开编辑器　B 回读　E 导出 D2　D 下发"),
         Line::from(""),
         Line::from(Span::styled("  说明", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  修改网络配置需管理员权限；非管理员时修改类功能灰显。"),
-        Line::from("  诊断按「当前上网网卡」为作用域，避免虚拟 / VPN 网卡误报。"),
+        Line::from("  修改网络配置需管理员权限；修改类操作先自动备份可回退。"),
     ];
     let p = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
-            .title(" 帮助 "),
+            .title(" 帮助（F1 / H） "),
     );
     f.render_widget(p, area);
 }

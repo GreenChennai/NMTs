@@ -1,0 +1,58 @@
+# 通用排障命令模板（脚本中心：常用网络排障命令）
+vendor: common
+label: "通用"
+prompt_features: []
+enter_config: ""
+exit_config: ""
+show_run: ""
+save_config: ""
+
+categories:
+  - id: diagnose
+    label: "排障诊断"
+
+commands:
+  - id: ping
+    category: diagnose
+    label: "Ping"
+    command: "ping {ip}"
+    args:
+      - { name: "ip", label: "目标 IP/域名", type: "string" }
+  - id: ping_cont
+    category: diagnose
+    label: "Ping（持续）"
+    command: "ping {ip} -t"
+    args:
+      - { name: "ip", label: "目标 IP/域名", type: "string" }
+  - id: tracert
+    category: diagnose
+    label: "路由追踪"
+    command: "tracert -d {ip}"
+    args:
+      - { name: "ip", label: "目标 IP/域名", type: "string" }
+  - id: nslookup
+    category: diagnose
+    label: "DNS 查询"
+    command: "nslookup {domain}"
+    args:
+      - { name: "domain", label: "域名", type: "string" }
+  - id: ipconfig_all
+    category: diagnose
+    label: "查看 IP 配置"
+    command: "ipconfig /all"
+  - id: arp
+    category: diagnose
+    label: "ARP 表"
+    command: "arp -a"
+  - id: route_print
+    category: diagnose
+    label: "路由表"
+    command: "route print"
+  - id: netstat
+    category: diagnose
+    label: "端口监听"
+    command: "netstat -ano"
+  - id: flush_dns
+    category: diagnose
+    label: "刷新 DNS"
+    command: "ipconfig /flushdns"

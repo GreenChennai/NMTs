@@ -9,6 +9,7 @@ use serde::Deserialize;
 const HUAWEI_YAML: &str = include_str!("../../vendor_db/huawei_vrp.yaml");
 const H3C_YAML: &str = include_str!("../../vendor_db/h3c_vrp.yaml");
 const CISCO_YAML: &str = include_str!("../../vendor_db/cisco_ios.yaml");
+const COMMON_YAML: &str = include_str!("../../vendor_db/common.yaml");
 
 /// 命令参数定义。
 #[derive(Debug, Clone, Deserialize)]
@@ -89,7 +90,7 @@ impl VendorDb {
     /// 加载内嵌的厂商模板。
     pub fn load() -> Self {
         let mut vendors = Vec::new();
-        for s in [HUAWEI_YAML, H3C_YAML, CISCO_YAML] {
+        for s in [HUAWEI_YAML, H3C_YAML, CISCO_YAML, COMMON_YAML] {
             if let Ok(v) = serde_yaml::from_str::<VendorTemplate>(s) {
                 vendors.push(v);
             }
@@ -122,10 +123,13 @@ mod tests {
     #[test]
     fn load_vendors() {
         let db = VendorDb::load();
-        assert_eq!(db.vendors().len(), 3);
+        assert_eq!(db.vendors().len(), 4);
         let h = db.get("huawei_vrp").unwrap();
         assert_eq!(h.label, "华为 (VRP)");
         assert!(h.command("save_config").is_some());
+        // 通用排障命令（脚本中心）
+        let c = db.get("common").unwrap();
+        assert!(c.command("tracert").is_some());
     }
 
     #[test]
