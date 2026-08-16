@@ -4,6 +4,7 @@
 
 pub mod backup;
 pub mod design_check;
+pub mod dns;
 pub mod net_diag;
 pub mod net_set;
 pub mod serial;

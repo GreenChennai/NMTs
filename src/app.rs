@@ -14,7 +14,7 @@ use crate::config::Config;
 use crate::core::net_diag::{CheckResult, DiagEvent, Diagnoser};
 use crate::core::net_set;
 use crate::core::topology::{DeviceRole, Topology};
-use crate::core::{backup, design_check, serial, topo_cli, topology, vendor_cli::VendorDb};
+use crate::core::{backup, design_check, dns, serial, topo_cli, topology, vendor_cli::VendorDb};
 use crate::ui;
 use crate::windows::adapter::Adapter;
 use crate::windows::probe::{probe_network, NetProbe};
@@ -34,6 +34,7 @@ pub enum QuickAction {
     TcpOptimize,
     Backup,
     Restore,
+    DnsOptimize,
 }
 
 /// 模块二操作项。
@@ -57,6 +58,7 @@ fn quick_items() -> Vec<QuickItem> {
         QuickItem { name: "开启 IPv6", desc: "netsh ipv6 set state enabled", action: QuickAction::Ipv6(true) },
         QuickItem { name: "关闭 IPv6", desc: "netsh ipv6 set state disabled", action: QuickAction::Ipv6(false) },
         QuickItem { name: "TCP 全局优化", desc: "autotuninglevel=normal + ecn", action: QuickAction::TcpOptimize },
+        QuickItem { name: "DNS 优选（测速+应用最优）", desc: "并发测速就近优选一键应用", action: QuickAction::DnsOptimize },
         QuickItem { name: "备份当前配置", desc: "netsh dump → backups/", action: QuickAction::Backup },
         QuickItem { name: "恢复最近备份", desc: "netsh -f 最近备份", action: QuickAction::Restore },
     ]
@@ -95,6 +97,21 @@ pub struct BackupState {
     pub selected: usize,
     pub result: Option<String>,
     pub bundles: Vec<std::path::PathBuf>,
+}
+
+/// DNS 优选结果更新。
+#[derive(Debug, Clone)]
+pub struct DnsUpdate {
+    pub results: Vec<dns::DnsBench>,
+    pub status: String,
+}
+
+/// 模块二 DNS 优选状态。
+#[derive(Debug, Default)]
+pub struct DnsState {
+    pub running: bool,
+    pub results: Vec<dns::DnsBench>,
+    pub status: Option<String>,
 }
 
 /// 模块四（拓扑图）状态。
@@ -166,6 +183,7 @@ pub struct App {
     pub vendor_db: VendorDb,
     pub backup: BackupState,
     pub topo: TopoState,
+    pub dns: DnsState,
     pub show_help: bool,
     pub status_msg: Option<String>,
     running: bool,
@@ -173,6 +191,8 @@ pub struct App {
     rx: UnboundedReceiver<DiagEvent>,
     probe_tx: UnboundedSender<NetProbe>,
     probe_rx: UnboundedReceiver<NetProbe>,
+    dns_tx: UnboundedSender<DnsUpdate>,
+    dns_rx: UnboundedReceiver<DnsUpdate>,
     rt: Handle,
 }
 
@@ -184,6 +204,7 @@ impl App {
         rx: UnboundedReceiver<DiagEvent>,
     ) -> Self {
         let (probe_tx, probe_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (dns_tx, dns_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // 后台探测（不阻塞 UI）
         let probe_tx_clone = probe_tx.clone();
@@ -208,6 +229,7 @@ impl App {
             vendor_db: VendorDb::load(),
             backup: BackupState::default(),
             topo: TopoState::default(),
+            dns: DnsState::default(),
             show_help: false,
             status_msg: None,
             running: true,
@@ -215,6 +237,8 @@ impl App {
             rx,
             probe_tx,
             probe_rx,
+            dns_tx,
+            dns_rx,
             rt,
         }
     }
@@ -234,6 +258,7 @@ impl App {
         while self.running {
             self.drain_events();
             self.drain_probe();
+            self.drain_dns();
             terminal.draw(|f| ui::draw(f, self))?;
 
             if event::poll(Duration::from_millis(50))? {
@@ -407,6 +432,42 @@ impl App {
                 },
                 None => (false, "无可用备份".into()),
             },
+            QuickAction::DnsOptimize => {
+                if iface.is_empty() {
+                    (false, "未找到当前上网网卡".into())
+                } else {
+                    self.dns.running = true;
+                    self.dns.results.clear();
+                    self.dns.status = Some("DNS 优选测速中…".into());
+                    let categories = self.config.dns_preference.categories.clone();
+                    let prefer_ipv = self.config.dns_preference.prefer_ipv.clone();
+                    let prefer_country = self.config.dns_preference.prefer_country.clone();
+                    let iface = iface.clone();
+                    let tx = self.dns_tx.clone();
+                    self.rt.spawn(async move {
+                        let db = dns::DnsDb::load();
+                        let candidates = db.filter(&categories, &prefer_ipv);
+                        let results = dns::benchmark(&candidates, 15).await;
+                        let ranked = dns::rank(results, &prefer_country);
+                        let status = if let Some(best) = ranked.first().filter(|b| b.reachable) {
+                            let _ = net_set::set_dns(&iface, &best.provider.primary);
+                            if !best.provider.secondary.is_empty() {
+                                let _ = net_set::add_dns(&iface, &best.provider.secondary);
+                            }
+                            format!(
+                                "最优：{} ({}) {}ms，已应用",
+                                best.provider.name,
+                                best.provider.primary,
+                                best.latency_ms.unwrap_or(0)
+                            )
+                        } else {
+                            "无可达候选 DNS".to_string()
+                        };
+                        let _ = tx.send(DnsUpdate { results: ranked, status });
+                    });
+                    (true, "已启动 DNS 优选测速".into())
+                }
+            }
         };
 
         self.quick_set.result = Some(format!("{} {msg}", if ok { "✓" } else { "✗" }));
@@ -537,6 +598,15 @@ impl App {
     fn drain_probe(&mut self) {
         while let Ok(p) = self.probe_rx.try_recv() {
             self.apply_probe(p);
+        }
+    }
+
+    /// 拉取 DNS 优选测速结果。
+    fn drain_dns(&mut self) {
+        while let Ok(u) = self.dns_rx.try_recv() {
+            self.dns.results = u.results;
+            self.dns.status = Some(u.status);
+            self.dns.running = false;
         }
     }
 

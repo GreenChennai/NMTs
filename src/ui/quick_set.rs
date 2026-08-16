@@ -103,6 +103,24 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // DNS 优选排名
+    if !app.dns.results.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " DNS 优选排名：",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        for (i, r) in app.dns.results.iter().take(8).enumerate() {
+            let lat = r.latency_ms.map(|l| format!("{l}ms")).unwrap_or_else(|| "超时".into());
+            let color = if r.reachable { Color::White } else { Color::DarkGray };
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}. ", i + 1), Style::default().fg(color)),
+                Span::styled(format!("{} [{}] ", r.provider.name, r.provider.country), Style::default().fg(color)),
+                Span::styled(lat, Style::default().fg(if r.reachable { Color::Green } else { Color::DarkGray })),
+            ]));
+        }
+    }
+
     let p = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(" 操作结果 "))
         .wrap(Wrap { trim: true });
