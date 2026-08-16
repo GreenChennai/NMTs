@@ -1,5 +1,22 @@
 # NMTs 发布说明
 
+## v0.5.0
+
+第五个里程碑：模块四「拓扑图工具」（设计 + 预检 + CLI 推导）。
+
+### 新增
+
+- **拓扑数据模型**（`core/topology.rs`）：`Device` / `DeviceConfig` / `Vlan` / `L3Intf` / `PortConf` / `Link` / `Credentials` 完整参数模型，可 serde 序列化存档；`petgraph` 无向图构建 + 邻居查询。
+- **前置条件预检**（`core/design_check.rs`）：声明式 `Intent` 约束求值，输出问题清单（Error/Warn/Info）——子网重叠、VLAN 未放行、冗余上联、STP 环路、路由协议不一致、MTU 不一致、单点故障。
+- **CLI 推导**（`core/topo_cli.rs`）：据设备参数 + 厂商（华为/H3C VRP、Cisco IOS）生成主机名 / VLAN / trunk / access / 三层接口 / 静态路由配置。
+- **D2 导出**（`export_d2`）：生成 `.d2` 文本，`E` 键导出并尝试调用 `d2` CLI 渲染 SVG。
+- **拓扑界面**（模块四）：内置演示拓扑，设备列表 / 链路、预检问题清单（severity 着色）、CLI 预览。
+
+### 已知限制
+
+- 拓扑画布编辑（拖拽画图）规划于后续版本，当前为「模型 + 预检 + 推导」核心，内置演示拓扑。
+- 设备参数编辑窗口、与模块三的一键下发联动（自动连接 / 配置漂移）规划于 v1.0。
+
 ## v0.4.0
 
 第四个里程碑：模块五「配置备份 / 恢复」。

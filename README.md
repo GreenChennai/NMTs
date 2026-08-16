@@ -2,7 +2,7 @@
   <h1 align="center">NMTs · 网络维护工具集</h1>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.0-orange.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/lang-Rust-DEA584.svg" alt="Language">
   <img src="https://img.shields.io/badge/UI-ratatui%20%2B%20crossterm-4D4D4D.svg" alt="UI">
@@ -34,7 +34,7 @@
 | v0.2 模块一三层补全 + 多网卡判定 + 模块二快捷设置 + 启动/诊断提速 | ✅ 完成 |
 | v0.3 模块三串口终端 + 厂商模板 + eNSP | ✅ 完成 |
 | v0.4 模块五备份 / 恢复 + 执行反馈框架 | ✅ 完成 |
-| v0.5 模块四拓扑 + 预检 + CLI 推导 | ⏳ |
+| v0.5 模块四拓扑 + 预检 + CLI 推导 | ✅ 完成 |
 | v0.6 模块二 DNS 优选引擎 | ⏳ |
 | v1.0 模块联动 + 日志体系 + 安装包 | ⏳ |
 

@@ -13,7 +13,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::config::Config;
 use crate::core::net_diag::{CheckResult, DiagEvent, Diagnoser};
 use crate::core::net_set;
-use crate::core::{backup, serial, vendor_cli::VendorDb};
+use crate::core::topology::{DeviceRole, Topology};
+use crate::core::{backup, design_check, serial, topo_cli, topology, vendor_cli::VendorDb};
 use crate::ui;
 use crate::windows::adapter::Adapter;
 use crate::windows::probe::{probe_network, NetProbe};
@@ -96,6 +97,39 @@ pub struct BackupState {
     pub bundles: Vec<std::path::PathBuf>,
 }
 
+/// 模块四（拓扑图）状态。
+#[derive(Debug)]
+pub struct TopoState {
+    pub topology: Topology,
+    pub findings: Vec<design_check::Finding>,
+    pub selected: usize,
+    pub cli: Option<String>,
+    pub status: Option<String>,
+}
+
+impl Default for TopoState {
+    fn default() -> Self {
+        let topology = topology::demo_topology();
+        let findings = design_check::check(
+            &topology,
+            &[
+                design_check::Intent::UniqueSubnet,
+                design_check::Intent::VlanPropagated { vlan: 10, to: DeviceRole::Access },
+                design_check::Intent::VlanPropagated { vlan: 20, to: DeviceRole::Access },
+                design_check::Intent::RedundantUplink { role: DeviceRole::Access },
+                design_check::Intent::NoLoop,
+            ],
+        );
+        Self {
+            topology,
+            findings,
+            selected: 0,
+            cli: None,
+            status: None,
+        }
+    }
+}
+
 /// 模块一诊断界面状态。
 #[derive(Debug, Default)]
 pub struct DiagState {
@@ -131,6 +165,7 @@ pub struct App {
     pub term: TermState,
     pub vendor_db: VendorDb,
     pub backup: BackupState,
+    pub topo: TopoState,
     pub show_help: bool,
     pub status_msg: Option<String>,
     running: bool,
@@ -172,6 +207,7 @@ impl App {
             },
             vendor_db: VendorDb::load(),
             backup: BackupState::default(),
+            topo: TopoState::default(),
             show_help: false,
             status_msg: None,
             running: true,
@@ -250,6 +286,7 @@ impl App {
                     }
                 }
                 2 => self.term_move(-1),
+                3 => self.topo.selected = self.topo.selected.saturating_sub(1),
                 4 => self.backup.selected = self.backup.selected.saturating_sub(1),
                 _ => {}
             },
@@ -261,6 +298,12 @@ impl App {
                     }
                 }
                 2 => self.term_move(1),
+                3 => {
+                    let n = self.topo.topology.devices.len();
+                    if n > 0 && self.topo.selected + 1 < n {
+                        self.topo.selected += 1;
+                    }
+                }
                 4 => {
                     if self.backup.selected < 2 {
                         self.backup.selected += 1;
@@ -268,6 +311,11 @@ impl App {
                 }
                 _ => {}
             },
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                if self.tab == 3 {
+                    self.topo_export_d2();
+                }
+            }
             KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
                 match self.tab {
                     0 => {
@@ -282,6 +330,7 @@ impl App {
                         }
                     }
                     2 => self.term_send(),
+                    3 => self.topo_gen_cli(),
                     4 => {
                         let sel = self.backup.selected;
                         self.execute_backup(sel);
@@ -425,6 +474,46 @@ impl App {
             _ => {}
         }
         self.backup.bundles = backup::list_bundles(&root);
+    }
+
+    /// 模块四：生成选中设备的 CLI。
+    fn topo_gen_cli(&mut self) {
+        let Some(d) = self.topo.topology.devices.get(self.topo.selected) else {
+            return;
+        };
+        let cli = topo_cli::generate_device_cli(d, &self.topo.topology);
+        self.topo.status = Some(format!("已生成 {} 的 CLI", d.name));
+        self.topo.cli = Some(cli);
+    }
+
+    /// 模块四：导出 D2 并尝试渲染 SVG。
+    fn topo_export_d2(&mut self) {
+        let d2 = self.topo.topology.export_d2();
+        let root = crate::config::app_root();
+        let d2_path = root.join("topology.d2");
+        match std::fs::write(&d2_path, &d2) {
+            Ok(_) => {
+                let svg = root.join("topology.svg");
+                let out = crate::windows::run(
+                    "d2",
+                    &[
+                        d2_path.to_str().unwrap_or("topology.d2"),
+                        svg.to_str().unwrap_or("topology.svg"),
+                    ],
+                    std::time::Duration::from_secs(30),
+                );
+                if out.success {
+                    self.topo.status = Some(format!("已导出并渲染：{}", svg.display()));
+                } else {
+                    self.topo.status = Some(format!(
+                        "已导出 {}（未检测到 d2 CLI，跳过渲染，可手动 `d2 {}`）",
+                        d2_path.display(),
+                        d2_path.display()
+                    ));
+                }
+            }
+            Err(e) => self.topo.status = Some(format!("导出失败: {e}")),
+        }
     }
 
     /// 启动诊断（后台重新探测 + 异步执行，事件经 mpsc 回传）。
