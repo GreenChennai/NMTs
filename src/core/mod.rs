@@ -7,6 +7,7 @@ pub mod design_check;
 pub mod dns;
 pub mod net_diag;
 pub mod net_set;
+pub mod report;
 pub mod serial;
 pub mod topo_cli;
 pub mod topology;

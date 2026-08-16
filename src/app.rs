@@ -497,6 +497,11 @@ impl App {
                     self.trace_route();
                 }
             }
+            KeyCode::Char('g') | KeyCode::Char('G') => {
+                if self.tab == 0 {
+                    self.export_report();
+                }
+            }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 if self.tab == 3 {
                     self.topo_deploy();
@@ -661,7 +666,10 @@ impl App {
             }
         };
 
-        self.quick_set.result = Some(format!("{} {msg}", if ok { "✓" } else { "✗" }));
+        let result = format!("{} {msg}", if ok { "✓" } else { "✗" });
+        // 操作审计（记录到 logs/audit.log）
+        crate::core::report::audit(&crate::config::app_root(), "快捷设置", &result);
+        self.quick_set.result = Some(result);
     }
 
     /// 模块二：应用排名表选中的 DNS（先备份原 DNS，可回退）。
@@ -1072,6 +1080,23 @@ impl App {
                 Err(e) => self.topo.status = Some(format!("解析 topology.json 失败: {e}")),
             },
             Err(_) => self.topo.status = Some("未找到 topology.json，请先打开编辑器保存".into()),
+        }
+    }
+
+    /// 报告导出：诊断结果导出为 Markdown。
+    fn export_report(&mut self) {
+        if !self.diag.started {
+            self.diag.summary = Some("请先运行诊断".into());
+            return;
+        }
+        let results: Vec<CheckResult> = self.diag.results.iter().filter_map(|r| r.clone()).collect();
+        let summary = self.diag.summary.clone().unwrap_or_default();
+        let md = crate::core::report::diag_report_md(&results, &summary, &[]);
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let filename = format!("diag_{ts}.md");
+        match crate::core::report::write_report(&crate::config::app_root(), &filename, &md) {
+            Ok(p) => self.diag.summary = Some(format!("报告已导出：{}", p.display())),
+            Err(e) => self.diag.summary = Some(format!("导出失败：{e}")),
         }
     }
 

@@ -23,11 +23,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(" 诊断进行中…", Style::default().fg(Color::Yellow))
     } else if app.diag.started {
         Span::styled(
-            " 诊断完成，按 R 重新运行 · F 自动修复 · T 路由追踪",
+            " 诊断完成，按 R 重新运行 · F 自动修复 · T 路由追踪 · G 导出报告",
             Style::default().fg(Color::DarkGray),
         )
     } else {
-        Span::styled(" 按 Enter / R 开始诊断 · T 路由追踪", Style::default().fg(Color::Cyan))
+        Span::styled(" 按 Enter / R 开始诊断 · T 路由追踪 · G 导出报告", Style::default().fg(Color::Cyan))
     };
     f.render_widget(Paragraph::new(Line::from(hint)), chunks[0]);
 
