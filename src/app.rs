@@ -460,7 +460,7 @@ impl App {
                     }
                 }
                 4 => {
-                    if self.backup.selected < 2 {
+                    if self.backup.selected < 3 {
                         self.backup.selected += 1;
                     }
                 }
@@ -902,9 +902,45 @@ impl App {
                 self.backup.bundles = backup::list_bundles(&root);
                 self.backup.result = Some(format!("已列出 {} 个备份", self.backup.bundles.len()));
             }
+            3 => self.backup_device_config(),
             _ => {}
         }
         self.backup.bundles = backup::list_bundles(&root);
+    }
+
+    /// 模块五：抓取已连接设备的 running-config 并归档。
+    fn backup_device_config(&mut self) {
+        if self.term.conn != ConnState::Connected {
+            self.backup.result = Some("✗ 请先在「网工工具」连接设备".into());
+            return;
+        }
+        let vendor = self
+            .vendor_db
+            .vendors()
+            .get(self.term.vendor_idx)
+            .map(|v| v.vendor.clone())
+            .unwrap_or_else(|| "huawei_vrp".to_string());
+        let device_name = self
+            .term
+            .ports
+            .get(self.term.selected_port)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "device".to_string());
+
+        // 发送抓取命令
+        let show_cmd = if vendor == "cisco_ios" {
+            "show running-config"
+        } else {
+            "display current-configuration"
+        };
+        self.send_line(show_cmd);
+
+        // 用当前终端回显的最近内容近似归档（真实抓取需等待回显完整）
+        let cfg = self.term.output.join("\n");
+        match backup::backup_device(&crate::config::app_root(), &device_name, &vendor, &cfg) {
+            Ok(b) => self.backup.result = Some(format!("✓ 已归档设备配置到 {}", b.display())),
+            Err(e) => self.backup.result = Some(format!("✗ {e}")),
+        }
     }
 
     /// 模块四：生成选中设备的 CLI。

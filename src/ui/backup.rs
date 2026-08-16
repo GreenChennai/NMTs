@@ -9,8 +9,9 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::ui::widgets::scroll_list;
 
-const ACTIONS: [(&str, &str); 3] = [
+const ACTIONS: [(&str, &str); 4] = [
     ("备份本机网络配置", "netsh dump + wlan profile + 注册表 → .nmtsbak"),
+    ("备份已连接设备配置", "抓取 running-config 归档（需先连接设备）"),
     ("恢复最近备份", "netsh -f + wlan add + reg import"),
     ("刷新备份列表", "重新扫描 backups/"),
 ];

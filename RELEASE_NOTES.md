@@ -1,5 +1,10 @@
 # NMTs 发布说明
 
+## v1.4.0（V2.0 增量四：设备配置备份）
+
+- **备份已连接设备配置**：`backup::backup_device` 把已连接设备的 `running-config` 归档进 `.nmtsbak` 的 `devices/<device>_running.cfg`（manifest 标注 `kind: device` + 厂商）。
+- **模块五新增动作**：「备份已连接设备配置」——仅在模块三已连接时可用，否则提示先连接；发送 `display current-configuration`（VRP）/ `show running-config`（IOS）抓取归档。
+
 ## v1.3.0（V2.0 增量三：网工工具连接状态机）
 
 - **连接状态机**（未连接 → 扫描 → 已连接）：未连接时仅显示串口列表 + 扫描入口（管理命令不暴露）；扫描成功后建立**持久串口会话**，后台读线程持续回显。

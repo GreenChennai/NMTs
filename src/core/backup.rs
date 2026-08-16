@@ -107,6 +107,43 @@ pub fn backup_windows(root: &Path) -> Result<PathBuf, String> {
     Ok(bundle)
 }
 
+/// 备份已连接设备的 running-config，返回 `.nmtsbak` 路径。
+pub fn backup_device(
+    root: &Path,
+    device_name: &str,
+    vendor: &str,
+    running_config: &str,
+) -> Result<PathBuf, String> {
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let safe_name = device_name.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let name = format!("{ts}_{safe_name}_device.nmtsbak");
+    let bundle = bundle_dir(root).join(&name);
+
+    let tmp = std::env::temp_dir().join(format!("nmts_dev_{ts}"));
+    let devices_dir = tmp.join("devices");
+    fs::create_dir_all(&devices_dir).map_err(|e| e.to_string())?;
+
+    fs::write(
+        devices_dir.join(format!("{safe_name}_running.cfg")),
+        running_config,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut manifest = Manifest::new("device");
+    manifest.source = device_name.to_string();
+    let _ = fs::write(
+        tmp.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?,
+    );
+    // 记录厂商（扩展字段）
+    let _ = fs::write(tmp.join("vendor.txt"), vendor);
+
+    fs::create_dir_all(bundle.parent().unwrap()).map_err(|e| e.to_string())?;
+    zip_dir(&tmp, &bundle)?;
+    let _ = fs::remove_dir_all(&tmp);
+    Ok(bundle)
+}
+
 /// 恢复本机网络配置。
 pub fn restore_windows(bundle: &Path) -> Result<(), String> {
     let tmp = std::env::temp_dir().join(format!("nmts_restore_{}", chrono::Local::now().timestamp_millis()));
