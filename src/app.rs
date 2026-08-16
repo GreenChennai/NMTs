@@ -494,6 +494,16 @@ impl App {
                     self.topo_deploy();
                 }
             }
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                if self.tab == 3 {
+                    self.topo_open_editor();
+                }
+            }
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                if self.tab == 3 {
+                    self.topo_load_json();
+                }
+            }
             KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
                 match self.tab {
                     0 => {
@@ -1006,6 +1016,52 @@ impl App {
                 });
             }
             None => self.topo.status = Some("未检测到串口，无法下发".into()),
+        }
+    }
+
+    /// 模块四：打开外部拓扑编辑器（导出 topology.json + 启动 pywebview 窗口）。
+    fn topo_open_editor(&mut self) {
+        let root = crate::config::app_root();
+        let json_path = root.join("topology.json");
+        let json = serde_json::to_string_pretty(&self.topo.topology).unwrap_or_default();
+        if std::fs::write(&json_path, &json).is_err() {
+            self.topo.status = Some("写入 topology.json 失败".into());
+            return;
+        }
+        let editor_py = root.join("editor").join("editor.py");
+        // 后台启动（webview 阻塞，不等待）
+        let _ = std::process::Command::new("python")
+            .arg(editor_py.to_str().unwrap_or("editor.py"))
+            .arg(json_path.to_str().unwrap_or("topology.json"))
+            .spawn();
+        self.topo.status = Some("已启动拓扑编辑器（需 pip install pywebview），编辑后按 B 回读".into());
+    }
+
+    /// 模块四：回读 topology.json（重新预检 + CLI 推导）。
+    fn topo_load_json(&mut self) {
+        let root = crate::config::app_root();
+        let json_path = root.join("topology.json");
+        match std::fs::read_to_string(&json_path) {
+            Ok(s) => match serde_json::from_str::<Topology>(&s) {
+                Ok(t) => {
+                    self.topo.topology = t;
+                    self.topo.findings = design_check::check(
+                        &self.topo.topology,
+                        &[
+                            design_check::Intent::UniqueSubnet,
+                            design_check::Intent::VlanPropagated { vlan: 10, to: DeviceRole::Access },
+                            design_check::Intent::VlanPropagated { vlan: 20, to: DeviceRole::Access },
+                            design_check::Intent::RedundantUplink { role: DeviceRole::Access },
+                            design_check::Intent::NoLoop,
+                        ],
+                    );
+                    self.topo.selected = 0;
+                    self.topo.cli = None;
+                    self.topo.status = Some("已回读 topology.json 并重新预检".into());
+                }
+                Err(e) => self.topo.status = Some(format!("解析 topology.json 失败: {e}")),
+            },
+            Err(_) => self.topo.status = Some("未找到 topology.json，请先打开编辑器保存".into()),
         }
     }
 

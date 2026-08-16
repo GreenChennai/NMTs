@@ -386,4 +386,15 @@ mod tests {
         assert_eq!(t2.devices.len(), 2);
         assert_eq!(t2.device("core").unwrap().config.hostname, "CORE");
     }
+
+    #[test]
+    fn json_roundtrip_editor_exchange() {
+        // 编辑器通过 topology.json 交换，验证 serde_json 兼容
+        let t = demo_topology();
+        let s = serde_json::to_string(&t).unwrap();
+        let t2: Topology = serde_json::from_str(&s).unwrap();
+        assert_eq!(t2.devices.len(), 5);
+        assert_eq!(t2.device("core").unwrap().vendor, Vendor::HuaweiVrp);
+        assert_eq!(t2.links.len(), 4);
+    }
 }

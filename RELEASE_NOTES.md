@@ -1,5 +1,14 @@
 # NMTs 发布说明
 
+## v1.5.0（V2.0 增量五：拓扑编辑器外置）
+
+- **外置拓扑编辑器**：`editor/topology_editor.html`（React Flow 画布）+ `editor/editor.py`（pywebview 独立窗口）。主 TUI 点「拓扑图」→ 按 `O` 导出 `topology.json` 并拉起独立编辑器窗口。
+- **编辑器能力**：设备类型按钮拖拽建节点（核心/汇聚/接入/路由/防火墙，带图标）、节点间连线、侧栏编辑设备属性（名称/主机名/厂商/角色）、保存 / 打开拓扑。
+- **JSON 回读**：编辑器保存 `topology.json` 后，主程序按 `B` 回读并重新跑预检 + CLI 推导（保留 `topo_cli` 能力）。
+- 新增 `topology.json` serde 往返单元测试，验证编辑器交换格式兼容。
+
+> 依赖 `pip install pywebview`；网页资源暂用 CDN（React Flow），后续可内嵌离线化。
+
 ## v1.4.0（V2.0 增量四：设备配置备份）
 
 - **备份已连接设备配置**：`backup::backup_device` 把已连接设备的 `running-config` 归档进 `.nmtsbak` 的 `devices/<device>_running.cfg`（manifest 标注 `kind: device` + 厂商）。

@@ -18,7 +18,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     .split(area);
 
     let hint = Span::styled(
-        " ↑/↓ 选设备 · Enter 生成 CLI · E 导出 D2/SVG（内置演示拓扑）",
+        " ↑/↓ 选设备 · Enter 生成 CLI · E 导出 D2 · O 打开编辑器 · B 回读 · D 下发",
         Style::default().fg(Color::DarkGray),
     );
     f.render_widget(Paragraph::new(Line::from(hint)), chunks[0]);
