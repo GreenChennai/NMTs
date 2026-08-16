@@ -26,14 +26,12 @@ pub const TABS: [&str; 5] = ["网络诊断", "快捷设置", "网工工具", "�
 #[derive(Debug, Clone, Copy)]
 pub enum QuickAction {
     FlushDns,
-    SetDns(&'static str, &'static str),
     DnsDhcp,
     IpDhcp,
     ReleaseRenew,
     Ipv6(bool),
     TcpOptimize,
-    Backup,
-    Restore,
+    /// DNS 优选：仅测速产出排名表，用户选中确认后才应用（见 2.4）。
     DnsOptimize,
 }
 
@@ -47,20 +45,18 @@ pub struct QuickItem {
 
 fn quick_items() -> Vec<QuickItem> {
     vec![
+        // DNS 组
+        QuickItem { name: "DNS 优选（测速排名）", desc: "并发测速就近排序，选中确认应用", action: QuickAction::DnsOptimize },
+        QuickItem { name: "DNS 切回自动获取", desc: "netsh set dns dhcp", action: QuickAction::DnsDhcp },
         QuickItem { name: "刷新 DNS 缓存", desc: "ipconfig /flushdns", action: QuickAction::FlushDns },
-        QuickItem { name: "设置 DNS：阿里", desc: "223.5.5.5", action: QuickAction::SetDns("阿里", "223.5.5.5") },
-        QuickItem { name: "设置 DNS：腾讯", desc: "119.29.29.29", action: QuickAction::SetDns("腾讯", "119.29.29.29") },
-        QuickItem { name: "设置 DNS：Google", desc: "8.8.8.8", action: QuickAction::SetDns("Google", "8.8.8.8") },
-        QuickItem { name: "设置 DNS：Cloudflare", desc: "1.1.1.1", action: QuickAction::SetDns("Cloudflare", "1.1.1.1") },
-        QuickItem { name: "DNS 切回 DHCP", desc: "自动获取 DNS", action: QuickAction::DnsDhcp },
-        QuickItem { name: "IP 切回 DHCP", desc: "自动获取 IP", action: QuickAction::IpDhcp },
+        // IP 组
+        QuickItem { name: "IP 切回自动获取", desc: "netsh set address dhcp", action: QuickAction::IpDhcp },
         QuickItem { name: "释放并续租 IP", desc: "ipconfig /release + /renew", action: QuickAction::ReleaseRenew },
+        // 协议组
         QuickItem { name: "开启 IPv6", desc: "netsh ipv6 set state enabled", action: QuickAction::Ipv6(true) },
         QuickItem { name: "关闭 IPv6", desc: "netsh ipv6 set state disabled", action: QuickAction::Ipv6(false) },
+        // 优化组
         QuickItem { name: "TCP 全局优化", desc: "autotuninglevel=normal + ecn", action: QuickAction::TcpOptimize },
-        QuickItem { name: "DNS 优选（测速+应用最优）", desc: "并发测速就近优选一键应用", action: QuickAction::DnsOptimize },
-        QuickItem { name: "备份当前配置", desc: "netsh dump → backups/", action: QuickAction::Backup },
-        QuickItem { name: "恢复最近备份", desc: "netsh -f 最近备份", action: QuickAction::Restore },
     ]
 }
 
@@ -70,6 +66,7 @@ pub struct QuickSetState {
     pub selected: usize,
     pub items: Vec<QuickItem>,
     pub result: Option<String>,
+    pub offset: usize,
 }
 
 impl Default for QuickSetState {
@@ -78,6 +75,7 @@ impl Default for QuickSetState {
             selected: 0,
             items: quick_items(),
             result: None,
+            offset: 0,
         }
     }
 }
@@ -87,6 +85,7 @@ impl Default for QuickSetState {
 pub struct TermState {
     pub vendor_idx: usize,
     pub cmd_idx: usize,
+    pub cmd_offset: usize,
     pub ports: Vec<serial::PortInfo>,
     pub status: Option<String>,
 }
@@ -97,6 +96,8 @@ pub struct BackupState {
     pub selected: usize,
     pub result: Option<String>,
     pub bundles: Vec<std::path::PathBuf>,
+    pub offset: usize,
+    pub bundles_offset: usize,
 }
 
 /// DNS 优选结果更新。
@@ -112,6 +113,11 @@ pub struct DnsState {
     pub running: bool,
     pub results: Vec<dns::DnsBench>,
     pub status: Option<String>,
+    /// 排名表选中项（测速完成后进入交互模式）。
+    pub selected: usize,
+    pub offset: usize,
+    /// 是否处于排名表交互模式（↑/↓ 选 DNS、Enter 应用、Esc 返回）。
+    pub interactive: bool,
 }
 
 /// 模块四（拓扑图）状态。
@@ -122,6 +128,8 @@ pub struct TopoState {
     pub selected: usize,
     pub cli: Option<String>,
     pub status: Option<String>,
+    pub offset: usize,
+    pub findings_offset: usize,
 }
 
 impl Default for TopoState {
@@ -143,6 +151,8 @@ impl Default for TopoState {
             selected: 0,
             cli: None,
             status: None,
+            offset: 0,
+            findings_offset: 0,
         }
     }
 }
@@ -156,6 +166,7 @@ pub struct DiagState {
     pub results: Vec<Option<CheckResult>>,
     pub logs: Vec<String>,
     pub summary: Option<String>,
+    pub offset: usize,
 }
 
 impl DiagState {
@@ -281,6 +292,8 @@ impl App {
             KeyCode::Esc => {
                 if self.show_help {
                     self.show_help = false;
+                } else if self.dns.interactive {
+                    self.dns.interactive = false;
                 }
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
@@ -305,7 +318,12 @@ impl App {
             }
             KeyCode::Up => match self.tab {
                 1 => {
-                    if !self.quick_set.items.is_empty() {
+                    if self.dns.interactive {
+                        let n = self.dns.results.len();
+                        if n > 0 {
+                            self.dns.selected = (self.dns.selected + n - 1) % n;
+                        }
+                    } else if !self.quick_set.items.is_empty() {
                         let n = self.quick_set.items.len();
                         self.quick_set.selected = (self.quick_set.selected + n - 1) % n;
                     }
@@ -317,7 +335,12 @@ impl App {
             },
             KeyCode::Down => match self.tab {
                 1 => {
-                    if !self.quick_set.items.is_empty() {
+                    if self.dns.interactive {
+                        let n = self.dns.results.len();
+                        if n > 0 {
+                            self.dns.selected = (self.dns.selected + 1) % n;
+                        }
+                    } else if !self.quick_set.items.is_empty() {
                         let n = self.quick_set.items.len();
                         self.quick_set.selected = (self.quick_set.selected + 1) % n;
                     }
@@ -359,7 +382,9 @@ impl App {
                         }
                     }
                     1 => {
-                        if let Some(item) = self.quick_set.items.get(self.quick_set.selected) {
+                        if self.dns.interactive {
+                            self.execute_dns_apply();
+                        } else if let Some(item) = self.quick_set.items.get(self.quick_set.selected) {
                             let action = item.action;
                             self.execute_quick(action);
                         }
@@ -379,7 +404,6 @@ impl App {
 
     /// 执行模块二快捷操作（同步，netsh 命令较快）。
     fn execute_quick(&mut self, action: QuickAction) {
-        let root = crate::config::app_root();
         let iface = self
             .active_adapter
             .as_ref()
@@ -390,14 +414,6 @@ impl App {
             QuickAction::FlushDns => {
                 let o = net_set::flush_dns();
                 (o.success, if o.success { "已刷新 DNS 缓存".into() } else { o.combined() })
-            }
-            QuickAction::SetDns(label, ip) => {
-                if iface.is_empty() {
-                    (false, "未找到当前上网网卡".into())
-                } else {
-                    let o = net_set::set_dns(&iface, ip);
-                    (o.success, if o.success { format!("已设置 DNS「{label}」{ip}") } else { o.combined() })
-                }
             }
             QuickAction::DnsDhcp => {
                 if iface.is_empty() {
@@ -431,56 +447,72 @@ impl App {
                 let o = net_set::tcp_optimize();
                 (o.success, if o.success { "TCP 已优化（自动调谐 + ECN）".into() } else { o.combined() })
             }
-            QuickAction::Backup => match net_set::backup_network(&root) {
-                Ok(dir) => (true, format!("已备份到 {}", dir.display())),
-                Err(e) => (false, e),
-            },
-            QuickAction::Restore => match net_set::list_backups(&root).into_iter().next() {
-                Some(dir) => match net_set::restore_network(&dir) {
-                    Ok(_) => (true, format!("已从 {} 恢复", dir.display())),
-                    Err(e) => (false, e),
-                },
-                None => (false, "无可用备份".into()),
-            },
             QuickAction::DnsOptimize => {
                 if iface.is_empty() {
                     (false, "未找到当前上网网卡".into())
                 } else {
+                    // 仅测速产出排名表，不自动写入；用户选中确认后才应用（见 2.4）
                     self.dns.running = true;
+                    self.dns.interactive = false;
                     self.dns.results.clear();
+                    self.dns.selected = 0;
+                    self.dns.offset = 0;
                     self.dns.status = Some("DNS 优选测速中…".into());
                     let categories = self.config.dns_preference.categories.clone();
                     let prefer_ipv = self.config.dns_preference.prefer_ipv.clone();
                     let prefer_country = self.config.dns_preference.prefer_country.clone();
-                    let iface = iface.clone();
                     let tx = self.dns_tx.clone();
                     self.rt.spawn(async move {
                         let db = dns::DnsDb::load();
                         let candidates = db.filter(&categories, &prefer_ipv);
                         let results = dns::benchmark(&candidates, 15).await;
                         let ranked = dns::rank(results, &prefer_country);
-                        let status = if let Some(best) = ranked.first().filter(|b| b.reachable) {
-                            let _ = net_set::set_dns(&iface, &best.provider.primary);
-                            if !best.provider.secondary.is_empty() {
-                                let _ = net_set::add_dns(&iface, &best.provider.secondary);
-                            }
-                            format!(
-                                "最优：{} ({}) {}ms，已应用",
-                                best.provider.name,
-                                best.provider.primary,
-                                best.latency_ms.unwrap_or(0)
-                            )
+                        let status = if ranked.iter().any(|b| b.reachable) {
+                            "测速完成，↑/↓ 选择 · Enter 应用 · Esc 返回".to_string()
                         } else {
                             "无可达候选 DNS".to_string()
                         };
                         let _ = tx.send(DnsUpdate { results: ranked, status });
                     });
-                    (true, "已启动 DNS 优选测速".into())
+                    (true, "已启动 DNS 优选测速（不会自动应用）".into())
                 }
             }
         };
 
         self.quick_set.result = Some(format!("{} {msg}", if ok { "✓" } else { "✗" }));
+    }
+
+    /// 模块二：应用排名表选中的 DNS（先备份原 DNS，可回退）。
+    fn execute_dns_apply(&mut self) {
+        let Some(best) = self.dns.results.get(self.dns.selected).cloned() else {
+            return;
+        };
+        let iface = self
+            .active_adapter
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        if iface.is_empty() {
+            self.quick_set.result = Some("✗ 未找到当前上网网卡".into());
+            return;
+        }
+        if !best.reachable {
+            self.quick_set.result = Some("✗ 该候选不可达".into());
+            return;
+        }
+        // 应用前备份原配置，可回退
+        let _ = net_set::backup_network(&crate::config::app_root());
+        let _ = net_set::set_dns(&iface, &best.provider.primary);
+        if !best.provider.secondary.is_empty() {
+            let _ = net_set::add_dns(&iface, &best.provider.secondary);
+        }
+        let msg = format!(
+            "✓ 已应用 DNS {}（{} / {}）",
+            best.provider.name, best.provider.primary, best.provider.secondary
+        );
+        self.quick_set.result = Some(msg.clone());
+        self.dns.status = Some(format!("已应用 {}，原 DNS 已备份可回退", best.provider.name));
+        self.dns.interactive = false;
     }
 
     /// 模块三：导航命令模板。
@@ -676,6 +708,10 @@ impl App {
             self.dns.results = u.results;
             self.dns.status = Some(u.status);
             self.dns.running = false;
+            if !self.dns.results.is_empty() {
+                self.dns.selected = 0;
+                self.dns.interactive = true;
+            }
         }
     }
 

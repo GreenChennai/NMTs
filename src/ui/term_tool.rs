@@ -7,8 +7,9 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::ui::widgets::scroll_list;
 
-pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(3), // 厂商选择
         Constraint::Min(4),    // 命令列表 + 详情
@@ -46,49 +47,34 @@ fn draw_vendor_tabs(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_cmd_list(f: &mut Frame, app: &App, area: Rect) {
+fn draw_cmd_list(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(v) = app.vendor_db.vendors().get(app.term.vendor_idx) else {
         return;
     };
 
-    let lines: Vec<Line> = v
+    let items: Vec<String> = v
         .commands
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
+        .map(|c| {
             let category = v
                 .categories
                 .iter()
                 .find(|cat| cat.id == c.category)
                 .map(|cat| cat.label.clone())
                 .unwrap_or_default();
-            if i == app.term.cmd_idx {
-                Line::from(vec![
-                    Span::styled(
-                        format!(" ▶ {} ", c.label),
-                        Style::default().fg(Color::Black).bg(Color::Cyan),
-                    ),
-                    Span::styled(
-                        format!("[{category}] {}\n", c.command),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::styled(format!("   {} ", c.label), Style::default().fg(Color::White)),
-                    Span::styled(
-                        format!("[{category}] {}\n", c.command),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ])
-            }
+            format!("{}  [{category}]  {}", c.label, c.command)
         })
         .collect();
 
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" 命令模板（↑/↓ 选择） "))
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    let selected = app.term.cmd_idx;
+    scroll_list(
+        f,
+        area,
+        Block::default().borders(Borders::ALL).title(" 命令模板（↑/↓ 选择） "),
+        &items,
+        selected,
+        &mut app.term.cmd_offset,
+    );
 }
 
 fn draw_cmd_detail(f: &mut Frame, app: &App, area: Rect) {

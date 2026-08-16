@@ -5,6 +5,7 @@ pub mod diagnose;
 pub mod quick_set;
 pub mod term_tool;
 pub mod topology;
+pub mod widgets;
 
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -16,6 +17,7 @@ use crate::app::{App, TABS};
 use crate::core::net_diag::Status;
 
 /// 状态对应颜色。
+#[allow(dead_code)] // v1.6 组件收口时用于状态着色
 pub fn status_color(s: Status) -> Color {
     match s {
         Status::Ok => Color::Green,
@@ -40,7 +42,7 @@ pub fn status_icon(s: Status) -> &'static str {
 }
 
 /// 主布局与路由。
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let chunks = Layout::vertical([
         Constraint::Length(2), // 标题栏

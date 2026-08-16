@@ -1,16 +1,17 @@
 //! 模块一：网络诊断界面（步骤清单 + 实时日志）。
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::core::net_diag::{FixKind, Status};
-use crate::ui::{status_color, status_icon};
+use crate::core::net_diag::Status;
+use crate::ui::widgets::scroll_list;
+use crate::ui::status_icon;
 
-pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(2),  // 提示行
         Constraint::Min(5),     // 列表 + 日志
@@ -40,78 +41,43 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_log(f, app, body[1]);
 }
 
-fn draw_check_list(f: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = Vec::new();
-    if !app.diag.started {
-        lines.push(Line::from(Span::styled(
-            " 尚未运行诊断。",
-            Style::default().fg(Color::DarkGray),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            " 将检测：当前上网网卡 / DHCP·IP / 默认路由 / 网关连通 / DNS 解析 / 系统代理 / 虚拟网卡干扰",
-            Style::default().fg(Color::DarkGray),
-        )));
+fn draw_check_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<String> = if !app.diag.started {
+        vec![
+            " 尚未运行诊断。".to_string(),
+            "".to_string(),
+            " 将检测：网卡判定 / DHCP·IP / 默认路由 / 网关连通 / DNS / 代理 / 虚拟网卡干扰".to_string(),
+            "        驱动 / 物理链路 / MTU / 外网连通 / 病毒 / 环路 / MAC 锁".to_string(),
+        ]
     } else {
+        let mut list = Vec::new();
         for (i, name) in app.diag.names.iter().enumerate() {
             let result = app.diag.results.get(i).and_then(|r| r.as_ref());
-            let (icon, color, status_txt, detail) = match result {
-                Some(r) => (
-                    status_icon(r.status),
-                    status_color(r.status),
-                    r.status.label(),
-                    r.detail.clone(),
-                ),
-                None => (
-                    status_icon(Status::Running),
-                    status_color(Status::Running),
-                    "检测中…",
-                    String::new(),
-                ),
+            let (icon, status_txt, detail) = match result {
+                Some(r) => (status_icon(r.status), r.status.label().to_string(), r.detail.clone()),
+                None => (status_icon(Status::Running), "检测中…".to_string(), String::new()),
             };
-            let mut spans = vec![
-                Span::styled(
-                    format!(" {} ", icon),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!(" {name} "), Style::default().fg(Color::White)),
-                Span::styled(format!("[{status_txt}]"), Style::default().fg(color)),
-            ];
-            if !detail.is_empty() {
-                spans.push(Span::styled(
-                    format!("  {detail}"),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            lines.push(Line::from(spans));
-
-            // 修复建议
-            if let Some(fix) = result.and_then(|r| r.fix.as_ref()) {
-                let (label, fcolor) = match &fix.kind {
-                    FixKind::Auto(_) => (format!("     ⚙ {}", fix.label), Color::Green),
-                    FixKind::Manual(_) => (format!("     ✎ {}", fix.label), Color::Yellow),
-                };
-                lines.push(Line::from(Span::styled(label, Style::default().fg(fcolor))));
-            }
+            let fix_txt = result
+                .and_then(|r| r.fix.as_ref())
+                .map(|f| format!("  → {}", f.label))
+                .unwrap_or_default();
+            list.push(format!("{icon} {name} [{status_txt}] {detail}{fix_txt}"));
         }
-
         if let Some(summary) = &app.diag.summary {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!(" ▶ {summary}"),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            )));
+            list.push(String::new());
+            list.push(format!("▶ {summary}"));
         }
-    }
+        list
+    };
 
-    let p = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" 诊断步骤清单 "),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    scroll_list(
+        f,
+        area,
+        Block::default().borders(Borders::ALL).title(" 诊断步骤清单 "),
+        &items,
+        app.diag.offset.min(items.len().saturating_sub(1)),
+        &mut app.diag.offset,
+    );
 }
 
 fn draw_log(f: &mut Frame, app: &App, area: Rect) {

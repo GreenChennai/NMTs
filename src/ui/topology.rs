@@ -8,8 +8,9 @@ use ratatui::Frame;
 
 use crate::app::App;
 use crate::core::design_check::Severity;
+use crate::ui::widgets::scroll_list;
 
-pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(4),
@@ -34,76 +35,58 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_cli(f, app, body[2]);
 }
 
-fn draw_devices(f: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = app
+fn draw_devices(f: &mut Frame, app: &mut App, area: Rect) {
+    let mut items: Vec<String> = app
         .topo
         .topology
         .devices
         .iter()
-        .enumerate()
-        .map(|(i, d)| {
-            let head = format!(" {} [{}·{}]", d.name, d.vendor.label(), d.role.label());
-            if i == app.topo.selected {
-                Line::from(Span::styled(
-                    format!("▶{head}"),
-                    Style::default().fg(Color::Black).bg(Color::Cyan),
-                ))
-            } else {
-                Line::from(Span::styled(head, Style::default().fg(Color::White)))
-            }
-        })
+        .map(|d| format!(" {} [{}·{}]", d.name, d.vendor.label(), d.role.label()))
         .collect();
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(" 链路：", Style::default().fg(Color::Cyan))));
+    items.push(String::new());
+    items.push(" 链路：".to_string());
     for l in &app.topo.topology.links {
-        lines.push(Line::from(Span::styled(
-            format!("   {} ↔ {}", l.from, l.to),
-            Style::default().fg(Color::DarkGray),
-        )));
+        items.push(format!("   {} ↔ {}", l.from, l.to));
     }
 
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" 拓扑设备 "))
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    let selected = app.topo.selected;
+    scroll_list(
+        f,
+        area,
+        Block::default().borders(Borders::ALL).title(" 拓扑设备 "),
+        &items,
+        selected,
+        &mut app.topo.offset,
+    );
 }
 
-fn draw_findings(f: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = if app.topo.findings.is_empty() {
-        vec![Line::from(Span::styled(
-            " 预检通过，无问题。",
-            Style::default().fg(Color::Green),
-        ))]
+fn draw_findings(f: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<String> = if app.topo.findings.is_empty() {
+        vec![" 预检通过，无问题。".to_string()]
     } else {
         app.topo
             .findings
             .iter()
-            .flat_map(|f| {
-                let (color, icon) = match f.severity {
-                    Severity::Error => (Color::Red, "✗"),
-                    Severity::Warn => (Color::Yellow, "!"),
-                    Severity::Info => (Color::Cyan, "i"),
+            .map(|f| {
+                let icon = match f.severity {
+                    Severity::Error => "✗",
+                    Severity::Warn => "!",
+                    Severity::Info => "i",
                 };
-                vec![
-                    Line::from(vec![
-                        Span::styled(format!(" {icon} "), Style::default().fg(color)),
-                        Span::styled(f.message.clone(), Style::default().fg(color)),
-                    ]),
-                    Line::from(Span::styled(
-                        format!("   ↳ {}", f.suggestion),
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                    Line::from(""),
-                ]
+                format!("{icon} {}  ↳ {}", f.message, f.suggestion)
             })
             .collect()
     };
 
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" 预检问题清单 "))
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    scroll_list(
+        f,
+        area,
+        Block::default().borders(Borders::ALL).title(" 预检问题清单 "),
+        &items,
+        app.topo.findings_offset.min(items.len().saturating_sub(1)),
+        &mut app.topo.findings_offset,
+    );
 }
 
 fn draw_cli(f: &mut Frame, app: &App, area: Rect) {

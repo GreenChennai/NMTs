@@ -3,10 +3,11 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::ui::widgets::scroll_list;
 
 const ACTIONS: [(&str, &str); 3] = [
     ("备份本机网络配置", "netsh dump + wlan profile + 注册表 → .nmtsbak"),
@@ -14,7 +15,7 @@ const ACTIONS: [(&str, &str); 3] = [
     ("刷新备份列表", "重新扫描 backups/"),
 ];
 
-pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(4),
@@ -34,62 +35,45 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_bundles(f, app, body[1]);
 }
 
-fn draw_actions(f: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = ACTIONS
+fn draw_actions(f: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<String> = ACTIONS
         .iter()
-        .enumerate()
-        .map(|(i, (name, desc))| {
-            if i == app.backup.selected {
-                Line::from(vec![
-                    Span::styled(format!(" ▶ {name} "), Style::default().fg(Color::Black).bg(Color::Cyan)),
-                    Span::styled(format!(" {desc}\n", ), Style::default().fg(Color::DarkGray)),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::styled(format!("   {name} "), Style::default().fg(Color::White)),
-                    Span::styled(format!(" {desc}\n", ), Style::default().fg(Color::DarkGray)),
-                ])
-            }
-        })
+        .map(|(name, desc)| format!("{name} — {desc}"))
         .collect();
+    let selected = app.backup.selected;
+    scroll_list(
+        f,
+        area,
+        Block::default().borders(Borders::ALL).title(" 备份 / 恢复 "),
+        &items,
+        selected,
+        &mut app.backup.offset,
+    );
 
     if let Some(r) = &app.backup.result {
-        lines.push(Line::from(""));
         let color = if r.starts_with('✓') { Color::Green } else { Color::Red };
-        lines.push(Line::from(Span::styled(format!(" {r}"), Style::default().fg(color))));
+        let p = Paragraph::new(Line::from(Span::styled(format!(" {r}"), Style::default().fg(color))));
+        f.render_widget(p, Rect { y: area.y + area.height.saturating_sub(2), x: area.x, width: area.width, height: 1 });
     }
-
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" 备份 / 恢复 "))
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
 }
 
-fn draw_bundles(f: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = if app.backup.bundles.is_empty() {
-        vec![Line::from(Span::styled(
-            " （暂无备份）",
-            Style::default().fg(Color::DarkGray),
-        ))]
+fn draw_bundles(f: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<String> = if app.backup.bundles.is_empty() {
+        vec![" （暂无备份）".to_string()]
     } else {
         app.backup
             .bundles
             .iter()
-            .map(|b| {
-                Line::from(Span::styled(
-                    format!(" {} ", b.file_name().unwrap_or_default().to_string_lossy()),
-                    Style::default().fg(Color::White),
-                ))
-            })
+            .map(|b| format!(" {} ", b.file_name().unwrap_or_default().to_string_lossy()))
             .collect()
     };
 
-    let p = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" 已备份 (.nmtsbak) "),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    scroll_list(
+        f,
+        area,
+        Block::default().borders(Borders::ALL).title(" 已备份 (.nmtsbak) "),
+        &items,
+        app.backup.bundles_offset.min(items.len().saturating_sub(1)),
+        &mut app.backup.bundles_offset,
+    );
 }

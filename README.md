@@ -2,7 +2,7 @@
   <h1 align="center">NMTs · 网络维护工具集</h1>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.0-orange.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/lang-Rust-DEA584.svg" alt="Language">
   <img src="https://img.shields.io/badge/UI-ratatui%20%2B%20crossterm-4D4D4D.svg" alt="UI">
@@ -28,15 +28,22 @@
 
 ## 当前进度
 
-| 里程碑 | 状态 |
-| --- | --- |
-| v0.1 项目骨架 + TUI 框架 + 配置加载 + 模块一基础层诊断 | ✅ 完成 |
-| v0.2 模块一三层补全 + 多网卡判定 + 模块二快捷设置 + 启动/诊断提速 | ✅ 完成 |
-| v0.3 模块三串口终端 + 厂商模板 + eNSP | ✅ 完成 |
-| v0.4 模块五备份 / 恢复 + 执行反馈框架 | ✅ 完成 |
-| v0.5 模块四拓扑 + 预检 + CLI 推导 | ✅ 完成 |
-| v0.6 模块二 DNS 优选引擎 | ✅ 完成 |
-| v1.0 模块联动 + 日志体系 + 安装包 | ✅ 完成 |
+### 已封版（v0.1 ~ v1.0）
+五大模块骨架 + 多网卡判定 + 执行反馈框架 + 拓扑设计/校验，`v1.0.0` 封版。
+
+### V2.0 迭代（体验重构 + 缺口补全，语义化增量 → 最终 v2.0.0 收口）
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| v1.1.0 | 统一 ScrollList + DNS 优选改确认 + 删冗余/分组 | ✅ 完成 |
+| v1.2.0 | 手动静态 IP 表单 + DHCP/IPv6 单一开关 | ⏳ |
+| v1.3.0 | 网工工具连接状态机 + eNSP + 持久会话 | ⏳ |
+| v1.4.0 | 配置备份支持设备 running-config | ⏳ |
+| v1.5.0 | 拓扑编辑器外置（React Flow + Python 独立窗口） | ⏳ |
+| v1.6.0 | 统一组件规范收口 + 回归测试 + 安装包 | ⏳ |
+| v1.7.0 | 多网卡深化 + EventBus + 诊断实时化 | ⏳ |
+| v1.8.0 | 配置漂移闭环 + 脚本中心 + 帮助引导 | ⏳ |
+| v2.0.0 | 大版本收口：报告导出 + 定时巡检 + 撤销审计 + 跨模块联动 | ⏳ |
 
 ## 环境与构建
 
