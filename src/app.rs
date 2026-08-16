@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::config::Config;
 use crate::core::net_diag::{CheckResult, DiagEvent, Diagnoser};
 use crate::core::net_set;
-use crate::core::{serial, vendor_cli::VendorDb};
+use crate::core::{backup, serial, vendor_cli::VendorDb};
 use crate::ui;
 use crate::windows::adapter::Adapter;
 use crate::windows::probe::{probe_network, NetProbe};
@@ -88,6 +88,14 @@ pub struct TermState {
     pub status: Option<String>,
 }
 
+/// 模块五（配置备份）状态。
+#[derive(Debug, Default)]
+pub struct BackupState {
+    pub selected: usize,
+    pub result: Option<String>,
+    pub bundles: Vec<std::path::PathBuf>,
+}
+
 /// 模块一诊断界面状态。
 #[derive(Debug, Default)]
 pub struct DiagState {
@@ -122,6 +130,7 @@ pub struct App {
     pub quick_set: QuickSetState,
     pub term: TermState,
     pub vendor_db: VendorDb,
+    pub backup: BackupState,
     pub show_help: bool,
     pub status_msg: Option<String>,
     running: bool,
@@ -162,6 +171,7 @@ impl App {
                 ..Default::default()
             },
             vendor_db: VendorDb::load(),
+            backup: BackupState::default(),
             show_help: false,
             status_msg: None,
             running: true,
@@ -240,6 +250,7 @@ impl App {
                     }
                 }
                 2 => self.term_move(-1),
+                4 => self.backup.selected = self.backup.selected.saturating_sub(1),
                 _ => {}
             },
             KeyCode::Down => match self.tab {
@@ -250,6 +261,11 @@ impl App {
                     }
                 }
                 2 => self.term_move(1),
+                4 => {
+                    if self.backup.selected < 2 {
+                        self.backup.selected += 1;
+                    }
+                }
                 _ => {}
             },
             KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -266,6 +282,10 @@ impl App {
                         }
                     }
                     2 => self.term_send(),
+                    4 => {
+                        let sel = self.backup.selected;
+                        self.execute_backup(sel);
+                    }
                     _ => {}
                 }
             }
@@ -381,6 +401,30 @@ impl App {
                 self.term.status = Some(format!("未检测到串口，命令：{rendered}"));
             }
         }
+    }
+
+    /// 模块五：执行备份 / 恢复 / 刷新。
+    fn execute_backup(&mut self, action: usize) {
+        let root = crate::config::app_root();
+        match action {
+            0 => match backup::backup_windows(&root) {
+                Ok(b) => self.backup.result = Some(format!("✓ 已备份到 {}", b.display())),
+                Err(e) => self.backup.result = Some(format!("✗ {e}")),
+            },
+            1 => match backup::list_bundles(&root).into_iter().next() {
+                Some(b) => match backup::restore_windows(&b) {
+                    Ok(_) => self.backup.result = Some(format!("✓ 已从 {} 恢复", b.display())),
+                    Err(e) => self.backup.result = Some(format!("✗ {e}")),
+                },
+                None => self.backup.result = Some("✗ 无可用备份".into()),
+            },
+            2 => {
+                self.backup.bundles = backup::list_bundles(&root);
+                self.backup.result = Some(format!("已列出 {} 个备份", self.backup.bundles.len()));
+            }
+            _ => {}
+        }
+        self.backup.bundles = backup::list_bundles(&root);
     }
 
     /// 启动诊断（后台重新探测 + 异步执行，事件经 mpsc 回传）。
