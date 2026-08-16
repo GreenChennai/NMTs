@@ -7,6 +7,7 @@
 pub mod adapter;
 pub mod netsh;
 pub mod powershell;
+pub mod probe;
 
 use std::process::Command;
 use std::time::Duration;

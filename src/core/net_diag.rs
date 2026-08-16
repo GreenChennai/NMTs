@@ -1,40 +1,18 @@
 //! 模块一：网络诊断引擎（三层诊断模型）。
 //!
-//! 基础层（DHCP/IP/DNS/端口/网关/掩码/代理/虚拟网卡）→ 本机环境（驱动/物理
-//! 损坏/MTU）→ 外部因素（病毒/路由器光猫/环路/MAC 锁）。
+//! 基础层（DHCP/IP/DNS/网关/掩码/代理/虚拟网卡）→ 本机环境层（驱动/物理
+//! 链路/MTU）→ 外部因素层（病毒/路由器光猫/环路/MAC 锁）。
 //!
-//! v0.1 落地基础层检查器；本机环境与外部因素在 v0.2 补齐。执行过程通过
-//! `mpsc` channel 流式推送进度 / 结果，TUI 每帧渲染最新状态。
-#![allow(dead_code)] // v0.1 骨架：Local/External 层、自动修复执行等 v0.2 补齐
-
-use std::time::Duration;
+//! v0.2 落地三层全部检查器。静态数据由 `windows::probe::probe_network()`
+//! 一次 PowerShell 调用拿全，动态检测（ping 网关 / ping 公网 / DNS 解析）并发
+//! 执行，避免多次子进程冷启动导致「启动慢 / 诊断慢」。执行过程通过 `mpsc`
+//! channel 流式推送进度 / 结果，TUI 每帧渲染。
+#![allow(dead_code)] // Layer/Status::Pending/FixKind 命令串等供后续 UI 与模块二使用
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::windows::adapter::{self, Adapter};
-use crate::windows::{is_admin, netsh, powershell, run};
-
-/// 基础层检查项 ID。
-const BASIC_CHECK_IDS: [&str; 7] = [
-    "active_adapter",
-    "dhcp_ip",
-    "default_route",
-    "gateway_ping",
-    "dns_resolve",
-    "system_proxy",
-    "virtual_nic",
-];
-
-/// 基础层检查项名称。
-const BASIC_CHECK_NAMES: [&str; 7] = [
-    "当前上网网卡判定",
-    "DHCP / IP 地址配置",
-    "默认路由 / 网关",
-    "网关连通性",
-    "DNS 解析",
-    "系统代理检测",
-    "虚拟网卡干扰",
-];
+use crate::windows::probe::{probe_network, NetProbe};
+use crate::windows::{netsh, run};
 
 /// 诊断分层。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,59 +86,99 @@ pub struct CheckResult {
 /// 诊断过程中推送的事件。
 #[derive(Debug, Clone)]
 pub enum DiagEvent {
-    /// 诊断开始（总检查项数）。
     Started { total: usize },
-    /// 某检查项开始。
     CheckStarted { index: usize, name: String },
-    /// 某检查项完成。
     CheckDone { index: usize, result: CheckResult },
-    /// 实时日志行（命令回显）。
     Log(String),
-    /// 诊断结束。
     Finished { summary: String },
 }
 
-/// 诊断上下文（启动时探测一次）。
+/// 一次诊断的动态检测结果（并发执行，避免串行等待）。
 #[derive(Debug, Clone, Default)]
-pub struct DiagContext {
-    pub active_adapter: Option<Adapter>,
-    pub adapters: Vec<Adapter>,
-    pub is_admin: bool,
+struct DynResults {
+    gateway_ping: bool,
+    wan_ping: bool,
 }
+
+/// 检查项定义（id, name, layer）。
+const CHECKS: [(&str, &str, Layer); 14] = [
+    // 基础层
+    ("active_adapter", "当前上网网卡判定", Layer::Basic),
+    ("dhcp_ip", "DHCP / IP 地址配置", Layer::Basic),
+    ("default_route", "默认路由 / 网关", Layer::Basic),
+    ("gateway_ping", "网关连通性", Layer::Basic),
+    ("dns_resolve", "DNS 解析", Layer::Basic),
+    ("system_proxy", "系统代理检测", Layer::Basic),
+    ("virtual_nic", "虚拟网卡干扰", Layer::Basic),
+    // 本机环境层
+    ("driver_health", "网卡驱动状态", Layer::Local),
+    ("link_status", "物理链路状态", Layer::Local),
+    ("mtu", "MTU 设置", Layer::Local),
+    // 外部因素层
+    ("wan_connectivity", "外网连通（路由器/光猫）", Layer::External),
+    ("threat", "病毒 / 威胁", Layer::External),
+    ("loop_risk", "二层环路风险", Layer::External),
+    ("mac_lock", "MAC 锁排查", Layer::External),
+];
 
 /// 诊断引擎。
 pub struct Diagnoser {
     pub ctx: DiagContext,
 }
 
+/// 诊断上下文（启动时探测一次）。
+#[derive(Debug, Clone, Default)]
+pub struct DiagContext {
+    pub probe: NetProbe,
+}
+
 impl Diagnoser {
-    /// 探测上下文（网卡、管理员权限）。
+    /// 探测上下文（单次 PowerShell 合并查询）。
     pub fn new() -> Self {
-        let adapters = adapter::list_adapters();
-        let active_adapter = adapter::get_active_adapter();
         Self {
             ctx: DiagContext {
-                active_adapter,
-                adapters,
-                is_admin: is_admin(),
+                probe: probe_network().unwrap_or_default(),
             },
         }
     }
 
-    /// 异步执行「基础层」诊断，逐项推送事件，返回结果列表。
-    pub async fn run_basic(&self, tx: UnboundedSender<DiagEvent>) -> Vec<CheckResult> {
-        let checks = self.basic_check_defs();
-        let _ = tx.send(DiagEvent::Started {
-            total: checks.len(),
-        });
+    /// 当前上网网卡。
+    pub fn active_adapter(&self) -> Option<&crate::windows::adapter::Adapter> {
+        self.ctx.probe.active_adapter()
+    }
 
-        let mut results = Vec::with_capacity(checks.len());
-        for (i, (id, name)) in checks.into_iter().enumerate() {
+    /// 三层全部检查项名称（供 UI 预先渲染列表）。
+    pub fn all_check_names() -> Vec<String> {
+        CHECKS.iter().map(|(_, n, _)| n.to_string()).collect()
+    }
+
+    /// 异步执行三层诊断，逐项推送事件，返回结果列表。
+    pub async fn run(&self, tx: UnboundedSender<DiagEvent>) -> Vec<CheckResult> {
+        let total = CHECKS.len();
+        let _ = tx.send(DiagEvent::Started { total });
+
+        // 动态检测并发执行（DNS 解析已合并进探测，这里只并发 ping 网关与公网）
+        let gateway = self.ctx.probe.gateway.clone();
+        let wan_ip = "223.5.5.5".to_string();
+
+        let _ = tx.send(DiagEvent::Log("并发检测：ping 网关 / ping 公网…".into()));
+        let (gw_ping, wan_ping) = tokio::join!(
+            ping_ok(&gateway),
+            ping_ok(&wan_ip),
+        );
+        let dyn_results = DynResults {
+            gateway_ping: gw_ping,
+            wan_ping,
+        };
+
+        // 逐项构建结果（基于缓存 + 动态结果）
+        let mut results = Vec::with_capacity(total);
+        for (i, (id, name, layer)) in CHECKS.iter().enumerate() {
             let _ = tx.send(DiagEvent::CheckStarted {
                 index: i,
-                name: name.clone(),
+                name: name.to_string(),
             });
-            let result = self.run_basic_check(id, &tx).await;
+            let result = self.build_check(id, *layer, &dyn_results);
             let _ = tx.send(DiagEvent::CheckDone {
                 index: i,
                 result: result.clone(),
@@ -173,49 +191,43 @@ impl Diagnoser {
         results
     }
 
-    fn basic_check_defs(&self) -> Vec<(&'static str, String)> {
-        BASIC_CHECK_IDS
-            .iter()
-            .zip(BASIC_CHECK_NAMES)
-            .map(|(id, name)| (*id, name.to_string()))
-            .collect()
-    }
+    /// 依据检查项 id 构建结果。
+    fn build_check(&self, id: &str, layer: Layer, dynr: &DynResults) -> CheckResult {
+        let p = &self.ctx.probe;
+        let active = p.active_adapter();
+        let scope = active.map(|a| a.name.clone());
 
-    /// 基础层检查项名称（供 UI 预先渲染列表）。
-    pub fn basic_check_names() -> Vec<String> {
-        BASIC_CHECK_IDS
-            .iter()
-            .zip(BASIC_CHECK_NAMES)
-            .map(|(_, n)| n.to_string())
-            .collect()
-    }
-
-    async fn run_basic_check(&self, id: &str, tx: &UnboundedSender<DiagEvent>) -> CheckResult {
         match id {
-            "active_adapter" => self.check_active_adapter(),
-            "dhcp_ip" => self.check_dhcp_ip(tx).await,
-            "default_route" => self.check_default_route(),
-            "gateway_ping" => self.check_gateway_ping(tx).await,
-            "dns_resolve" => self.check_dns_resolve(tx).await,
-            "system_proxy" => self.check_system_proxy(tx).await,
-            "virtual_nic" => self.check_virtual_nic(),
+            "active_adapter" => self.check_active_adapter(layer),
+            "dhcp_ip" => self.check_dhcp_ip(layer),
+            "default_route" => self.check_default_route(layer),
+            "gateway_ping" => self.check_gateway_ping(layer, dynr),
+            "dns_resolve" => self.check_dns_resolve(layer, dynr),
+            "system_proxy" => self.check_system_proxy(layer),
+            "virtual_nic" => self.check_virtual_nic(layer),
+            "driver_health" => self.check_driver_health(layer),
+            "link_status" => self.check_link_status(layer),
+            "mtu" => self.check_mtu(layer),
+            "wan_connectivity" => self.check_wan(layer, dynr),
+            "threat" => self.check_threat(layer),
+            "loop_risk" => self.check_loop(layer),
+            "mac_lock" => self.check_mac_lock(layer),
             _ => CheckResult {
                 id: "unknown",
                 name: "未知检查".into(),
-                layer: Layer::Basic,
+                layer,
                 status: Status::Info,
                 detail: String::new(),
                 fix: None,
-                scope: None,
+                scope,
             },
         }
     }
 
-    // ---- 各检查项 ----
+    // ---- 基础层 ----
 
-    fn check_active_adapter(&self) -> CheckResult {
-        let layer = Layer::Basic;
-        match &self.ctx.active_adapter {
+    fn check_active_adapter(&self, layer: Layer) -> CheckResult {
+        match self.active_adapter() {
             Some(a) => {
                 let is_virtual = a.is_virtual();
                 let (status, detail) = if is_virtual {
@@ -231,7 +243,7 @@ impl Diagnoser {
                     (
                         Status::Ok,
                         format!(
-                            "当前上网网卡「{}」（{}，{}），判定为物理网卡。",
+                            "当前上网网卡「{}」（{}，{}）。",
                             a.name,
                             a.kind_label(),
                             a.status
@@ -263,9 +275,9 @@ impl Diagnoser {
         }
     }
 
-    async fn check_dhcp_ip(&self, tx: &UnboundedSender<DiagEvent>) -> CheckResult {
-        let layer = Layer::Basic;
-        let Some(a) = &self.ctx.active_adapter else {
+    fn check_dhcp_ip(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        let Some(a) = p.active_adapter() else {
             return CheckResult {
                 id: "dhcp_ip",
                 name: "DHCP / IP 地址配置".into(),
@@ -276,63 +288,36 @@ impl Diagnoser {
                 scope: None,
             };
         };
+        let scope = Some(a.name.clone());
 
-        let cfg = get_ip_config(a.interface_index);
-        let _ = tx.send(DiagEvent::Log(format!(
-            "查询 IP 配置：{} (index {})",
-            a.name, a.interface_index
-        )));
-
-        let Some(cfg) = cfg else {
+        if p.ip.starts_with("169.254.") {
             return CheckResult {
                 id: "dhcp_ip",
                 name: "DHCP / IP 地址配置".into(),
                 layer,
                 status: Status::Error,
-                detail: format!("无法获取网卡「{}」的 IP 配置。", a.name),
-                fix: Some(Fix {
-                    kind: FixKind::Manual("确认网卡已启用并已连接网络。".into()),
-                    label: "需手动：检查网卡状态".into(),
-                }),
-                scope: Some(a.name.clone()),
-            };
-        };
-
-        // APIPA（169.254.x.x）说明 DHCP 失败
-        if cfg.ip.starts_with("169.254.") {
-            return CheckResult {
-                id: "dhcp_ip",
-                name: "DHCP / IP 地址配置".into(),
-                layer,
-                status: Status::Error,
-                detail: format!(
-                    "网卡「{}」地址为 {}(自动专用地址)，说明 DHCP 获取失败。",
-                    a.name, cfg.ip
-                ),
+                detail: format!("网卡「{}」地址为 {}(自动专用地址)，说明 DHCP 获取失败。", a.name, p.ip),
                 fix: Some(Fix {
                     kind: FixKind::Auto(format!("ipconfig /release \"{}\" && ipconfig /renew \"{}\"", a.name, a.name)),
                     label: "可自动执行：释放并重新获取 IP".into(),
                 }),
-                scope: Some(a.name.clone()),
+                scope,
             };
         }
 
-        let dhcp_txt = if cfg.dhcp_enabled { "DHCP 自动获取" } else { "静态配置" };
-        let mut detail = format!(
+        let dhcp_txt = if p.dhcp_enabled { "DHCP 自动获取" } else { "静态配置" };
+        let gw_txt = if p.gateway.is_empty() { "无".into() } else { p.gateway.clone() };
+        let detail = format!(
             "网卡「{}」{}：IP {}，前缀长度 {}，网关 {}。",
-            a.name, dhcp_txt, cfg.ip, cfg.prefix_len,
-            if cfg.gateway.is_empty() { "无".into() } else { cfg.gateway.clone() }
+            a.name, dhcp_txt, p.ip, p.prefix_len, gw_txt
         );
-        if cfg.gateway.is_empty() {
-            detail.push_str(" 未发现默认网关。");
-        }
         CheckResult {
             id: "dhcp_ip",
             name: "DHCP / IP 地址配置".into(),
             layer,
-            status: if cfg.gateway.is_empty() { Status::Warn } else { Status::Ok },
+            status: if p.gateway.is_empty() { Status::Warn } else { Status::Ok },
             detail,
-            fix: if cfg.gateway.is_empty() {
+            fix: if p.gateway.is_empty() {
                 Some(Fix {
                     kind: FixKind::Manual("确认 DHCP 服务器 / 路由器是否正常，或手动配置网关。".into()),
                     label: "需手动：检查网关配置".into(),
@@ -340,23 +325,24 @@ impl Diagnoser {
             } else {
                 None
             },
-            scope: Some(a.name.clone()),
+            scope,
         }
     }
 
-    fn check_default_route(&self) -> CheckResult {
-        let layer = Layer::Basic;
-        match adapter::get_default_route_public() {
-            Some(next_hop) => CheckResult {
+    fn check_default_route(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        if !p.next_hop.is_empty() {
+            CheckResult {
                 id: "default_route",
                 name: "默认路由 / 网关".into(),
                 layer,
                 status: Status::Ok,
-                detail: format!("存在默认路由，下一跳 {}", next_hop),
+                detail: format!("存在默认路由，下一跳 {}", p.next_hop),
                 fix: None,
-                scope: self.ctx.active_adapter.as_ref().map(|a| a.name.clone()),
-            },
-            None => CheckResult {
+                scope: p.active_adapter().map(|a| a.name.clone()),
+            }
+        } else {
+            CheckResult {
                 id: "default_route",
                 name: "默认路由 / 网关".into(),
                 layer,
@@ -367,35 +353,14 @@ impl Diagnoser {
                     label: "需手动：配置默认网关".into(),
                 }),
                 scope: None,
-            },
+            }
         }
     }
 
-    async fn check_gateway_ping(&self, tx: &UnboundedSender<DiagEvent>) -> CheckResult {
-        let layer = Layer::Basic;
-        let Some(a) = &self.ctx.active_adapter else {
-            return CheckResult {
-                id: "gateway_ping",
-                name: "网关连通性".into(),
-                layer,
-                status: Status::Warn,
-                detail: "无当前上网网卡，跳过网关连通检测。".into(),
-                fix: None,
-                scope: None,
-            };
-        };
-        let Some(cfg) = get_ip_config(a.interface_index) else {
-            return CheckResult {
-                id: "gateway_ping",
-                name: "网关连通性".into(),
-                layer,
-                status: Status::Warn,
-                detail: "未获取到 IP 配置，跳过。".into(),
-                fix: None,
-                scope: Some(a.name.clone()),
-            };
-        };
-        if cfg.gateway.is_empty() {
+    fn check_gateway_ping(&self, layer: Layer, dynr: &DynResults) -> CheckResult {
+        let p = &self.ctx.probe;
+        let scope = p.active_adapter().map(|a| a.name.clone());
+        if p.gateway.is_empty() {
             return CheckResult {
                 id: "gateway_ping",
                 name: "网关连通性".into(),
@@ -403,23 +368,20 @@ impl Diagnoser {
                 status: Status::Warn,
                 detail: "无默认网关，无法测试网关连通。".into(),
                 fix: None,
-                scope: Some(a.name.clone()),
+                scope,
             };
         }
-
-        let _ = tx.send(DiagEvent::Log(format!("ping 网关 {}", cfg.gateway)));
-        let ok = ping_ok(&cfg.gateway).await;
         CheckResult {
             id: "gateway_ping",
             name: "网关连通性".into(),
             layer,
-            status: if ok { Status::Ok } else { Status::Error },
-            detail: if ok {
-                format!("网关 {} 可达。", cfg.gateway)
+            status: if dynr.gateway_ping { Status::Ok } else { Status::Error },
+            detail: if dynr.gateway_ping {
+                format!("网关 {} 可达。", p.gateway)
             } else {
-                format!("网关 {} 不可达，局域网链路可能中断。", cfg.gateway)
+                format!("网关 {} 不可达，局域网链路可能中断。", p.gateway)
             },
-            fix: if ok {
+            fix: if dynr.gateway_ping {
                 None
             } else {
                 Some(Fix {
@@ -427,26 +389,23 @@ impl Diagnoser {
                     label: "需手动：检查物理链路与网关设备".into(),
                 })
             },
-            scope: Some(a.name.clone()),
+            scope,
         }
     }
 
-    async fn check_dns_resolve(&self, tx: &UnboundedSender<DiagEvent>) -> CheckResult {
-        let layer = Layer::Basic;
-        let domain = "www.baidu.com";
-        let _ = tx.send(DiagEvent::Log(format!("DNS 解析测试：{}", domain)));
-        let ok = dns_resolve_ok(domain).await;
+    fn check_dns_resolve(&self, layer: Layer, _dynr: &DynResults) -> CheckResult {
+        let p = &self.ctx.probe;
         CheckResult {
             id: "dns_resolve",
             name: "DNS 解析".into(),
             layer,
-            status: if ok { Status::Ok } else { Status::Error },
-            detail: if ok {
-                format!("域名 {} 解析成功，DNS 服务可用。", domain)
+            status: if p.dns_ok { Status::Ok } else { Status::Error },
+            detail: if p.dns_ok {
+                "域名 www.baidu.com 解析成功，DNS 服务可用。".into()
             } else {
-                format!("域名 {} 解析失败，DNS 服务可能不可用或配置被篡改。", domain)
+                "域名解析失败，DNS 服务可能不可用或配置被篡改。".into()
             },
-            fix: if ok {
+            fix: if p.dns_ok {
                 None
             } else {
                 Some(Fix {
@@ -454,27 +413,23 @@ impl Diagnoser {
                     label: "可自动执行：刷新 DNS 缓存".into(),
                 })
             },
-            scope: self.ctx.active_adapter.as_ref().map(|a| a.name.clone()),
+            scope: p.active_adapter().map(|a| a.name.clone()),
         }
     }
 
-    async fn check_system_proxy(&self, tx: &UnboundedSender<DiagEvent>) -> CheckResult {
-        let layer = Layer::Basic;
-        let _ = tx.send(DiagEvent::Log("检测系统代理：WinHTTP + Internet Settings".into()));
-        let winhttp = netsh::run_netsh(&["winhttp", "show", "proxy"]).combined();
-        let ie_proxy = get_ie_proxy();
-
-        let winhttp_direct = winhttp.contains("直接访问")
-            || winhttp.to_lowercase().contains("direct access");
-        let has_proxy = !winhttp_direct || ie_proxy.enabled;
+    fn check_system_proxy(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        let winhttp_direct = p.winhttp_proxy.contains("直接访问")
+            || p.winhttp_proxy.to_lowercase().contains("direct access");
+        let has_proxy = !winhttp_direct || p.ie_proxy_enabled;
 
         if has_proxy {
             let mut detail = String::from("检测到系统代理已开启：");
             if !winhttp_direct {
                 detail.push_str(" WinHTTP 代理已设置；");
             }
-            if ie_proxy.enabled {
-                detail.push_str(&format!(" 系统代理 {}", ie_proxy.server));
+            if p.ie_proxy_enabled {
+                detail.push_str(&format!(" 系统代理 {}", p.ie_proxy_server));
             }
             CheckResult {
                 id: "system_proxy",
@@ -501,13 +456,13 @@ impl Diagnoser {
         }
     }
 
-    fn check_virtual_nic(&self) -> CheckResult {
-        let layer = Layer::Basic;
-        let virtual_nics: Vec<&Adapter> = self
-            .ctx
+    fn check_virtual_nic(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        let virtual_nics: Vec<String> = p
             .adapters
             .iter()
             .filter(|a| a.is_virtual() && a.is_up())
+            .map(|a| a.name.clone())
             .collect();
 
         if virtual_nics.is_empty() {
@@ -522,30 +477,19 @@ impl Diagnoser {
             };
         }
 
-        let names: Vec<String> = virtual_nics.iter().map(|a| a.name.clone()).collect();
-        // 若当前上网网卡本身是虚拟网卡，则视为干扰风险
-        let active_is_virtual = self
-            .ctx
-            .active_adapter
-            .as_ref()
-            .map(|a| a.is_virtual())
-            .unwrap_or(false);
-
+        let active_is_virtual = p.active_adapter().map(|a| a.is_virtual()).unwrap_or(false);
         let (status, detail) = if active_is_virtual {
             (
                 Status::Error,
                 format!(
-                    "当前上网网卡为虚拟网卡，另检测到虚拟网卡：{}。VPN / 虚拟网卡可能抢占网关导致误判或异常。",
-                    names.join("、")
+                    "当前上网网卡为虚拟网卡，另检测到虚拟网卡：{}。VPN / 虚拟网卡可能抢占网关导致异常。",
+                    virtual_nics.join("、")
                 ),
             )
         } else {
             (
                 Status::Warn,
-                format!(
-                    "检测到启用的虚拟网卡：{}（仅供参考，不计入上网判定）。",
-                    names.join("、")
-                ),
+                format!("检测到启用的虚拟网卡：{}（仅供参考，不计入上网判定）。", virtual_nics.join("、")),
             )
         };
 
@@ -566,10 +510,230 @@ impl Diagnoser {
             scope: None,
         }
     }
+
+    // ---- 本机环境层 ----
+
+    fn check_driver_health(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        if p.problem_devices.is_empty() {
+            CheckResult {
+                id: "driver_health",
+                name: "网卡驱动状态".into(),
+                layer,
+                status: Status::Ok,
+                detail: "未发现状态异常的网络设备驱动。".into(),
+                fix: None,
+                scope: None,
+            }
+        } else {
+            CheckResult {
+                id: "driver_health",
+                name: "网卡驱动状态".into(),
+                layer,
+                status: Status::Error,
+                detail: format!("发现异常网络设备：{}（驱动缺失或错误）。", p.problem_devices.join("、")),
+                fix: Some(Fix {
+                    kind: FixKind::Manual("在设备管理器更新 / 重装对应网卡驱动。".into()),
+                    label: "需手动：更新网卡驱动".into(),
+                }),
+                scope: None,
+            }
+        }
+    }
+
+    fn check_link_status(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        match p.active_adapter() {
+            Some(a) if a.is_up() => CheckResult {
+                id: "link_status",
+                name: "物理链路状态".into(),
+                layer,
+                status: Status::Ok,
+                detail: format!("网卡「{}」物理链路已连接（Up）。", a.name),
+                fix: None,
+                scope: Some(a.name.clone()),
+            },
+            Some(a) => CheckResult {
+                id: "link_status",
+                name: "物理链路状态".into(),
+                layer,
+                status: Status::Error,
+                detail: format!("网卡「{}」物理链路断开（{}），可能是网线脱落 / 无线断开 / 网卡损坏。", a.name, a.status),
+                fix: Some(Fix {
+                    kind: FixKind::Manual("检查网线是否插好、无线是否连接、网卡指示灯是否亮。".into()),
+                    label: "需手动：检查物理连接".into(),
+                }),
+                scope: Some(a.name.clone()),
+            },
+            None => CheckResult {
+                id: "link_status",
+                name: "物理链路状态".into(),
+                layer,
+                status: Status::Warn,
+                detail: "无当前上网网卡，跳过物理链路检测。".into(),
+                fix: None,
+                scope: None,
+            },
+        }
+    }
+
+    fn check_mtu(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        if p.mtu == 0 {
+            return CheckResult {
+                id: "mtu",
+                name: "MTU 设置".into(),
+                layer,
+                status: Status::Warn,
+                detail: "未能读取 MTU。".into(),
+                fix: None,
+                scope: None,
+            };
+        }
+        if p.mtu < 1280 {
+            CheckResult {
+                id: "mtu",
+                name: "MTU 设置".into(),
+                layer,
+                status: Status::Warn,
+                detail: format!("当前 MTU 为 {}，过小可能导致分片 / 丢包。", p.mtu),
+                fix: Some(Fix {
+                    kind: FixKind::Manual("建议将 MTU 恢复为 1500（以太网标准）。".into()),
+                    label: "需手动：调整 MTU".into(),
+                }),
+                scope: p.active_adapter().map(|a| a.name.clone()),
+            }
+        } else {
+            CheckResult {
+                id: "mtu",
+                name: "MTU 设置".into(),
+                layer,
+                status: Status::Ok,
+                detail: format!("当前 MTU {}，正常。", p.mtu),
+                fix: None,
+                scope: p.active_adapter().map(|a| a.name.clone()),
+            }
+        }
+    }
+
+    // ---- 外部因素层 ----
+
+    fn check_wan(&self, layer: Layer, dynr: &DynResults) -> CheckResult {
+        // 网关通但公网不通 → 路由器/光猫/运营商问题；网关也不通则问题在局域网。
+        if dynr.wan_ping {
+            CheckResult {
+                id: "wan_connectivity",
+                name: "外网连通（路由器/光猫）".into(),
+                layer,
+                status: Status::Ok,
+                detail: "公网地址 223.5.5.5 可达，出口链路正常。".into(),
+                fix: None,
+                scope: None,
+            }
+        } else if dynr.gateway_ping {
+            CheckResult {
+                id: "wan_connectivity",
+                name: "外网连通（路由器/光猫）".into(),
+                layer,
+                status: Status::Error,
+                detail: "局域网可达但公网不通，问题可能在路由器 / 光猫 / 运营商链路。".into(),
+                fix: Some(Fix {
+                    kind: FixKind::Manual("重启路由器 / 光猫；仍不通则联系运营商（宽带欠费 / 线路故障）。".into()),
+                    label: "需手动：重启光猫路由器或联系运营商".into(),
+                }),
+                scope: None,
+            }
+        } else {
+            CheckResult {
+                id: "wan_connectivity",
+                name: "外网连通（路由器/光猫）".into(),
+                layer,
+                status: Status::Warn,
+                detail: "局域网与公网均不可达，先排查本机与局域网链路。".into(),
+                fix: None,
+                scope: None,
+            }
+        }
+    }
+
+    fn check_threat(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        if p.threat_count > 0 {
+            CheckResult {
+                id: "threat",
+                name: "病毒 / 威胁".into(),
+                layer,
+                status: Status::Error,
+                detail: format!("Windows Defender 检测到 {} 个威胁，可能导致网络异常。", p.threat_count),
+                fix: Some(Fix {
+                    kind: FixKind::Manual("运行 Windows 安全中心全盘扫描并清除威胁。".into()),
+                    label: "需手动：查杀病毒".into(),
+                }),
+                scope: None,
+            }
+        } else {
+            CheckResult {
+                id: "threat",
+                name: "病毒 / 威胁".into(),
+                layer,
+                status: Status::Ok,
+                detail: "未检测到活跃威胁。".into(),
+                fix: None,
+                scope: None,
+            }
+        }
+    }
+
+    fn check_loop(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        if p.route_count > 1 {
+            CheckResult {
+                id: "loop_risk",
+                name: "二层环路风险".into(),
+                layer,
+                status: Status::Warn,
+                detail: format!("检测到 {} 条默认路由（多出口），若伴随网络卡顿需排查环路 / 冗余链路。", p.route_count),
+                fix: Some(Fix {
+                    kind: FixKind::Manual("检查交换机是否成环；冗余链路需启用生成树协议（STP）。".into()),
+                    label: "需手动：排查环路 / 启用 STP".into(),
+                }),
+                scope: None,
+            }
+        } else {
+            CheckResult {
+                id: "loop_risk",
+                name: "二层环路风险".into(),
+                layer,
+                status: Status::Ok,
+                detail: "未发现明显环路 / 多出口特征。".into(),
+                fix: None,
+                scope: None,
+            }
+        }
+    }
+
+    fn check_mac_lock(&self, layer: Layer) -> CheckResult {
+        let p = &self.ctx.probe;
+        CheckResult {
+            id: "mac_lock",
+            name: "MAC 锁排查".into(),
+            layer,
+            status: Status::Info,
+            detail: "若仅本机无法上网而其他设备正常，可能是路由器 MAC 过滤 / 绑定限制。".into(),
+            fix: Some(Fix {
+                kind: FixKind::Manual(format!(
+                    "登录路由器后台检查 MAC 过滤名单；本机 MAC 可在 `ipconfig /all` 查看（网卡「{}」）。",
+                    p.active_adapter().map(|a| a.name.clone()).unwrap_or_else(|| "未知".into())
+                )),
+                label: "需手动：检查路由器 MAC 过滤".into(),
+            }),
+            scope: None,
+        }
+    }
 }
 
 /// 汇总诊断结果，给出一句话结论。
-fn summarize(results: &[CheckResult]) -> String {
+pub fn summarize(results: &[CheckResult]) -> String {
     let ok = results.iter().filter(|r| r.status == Status::Ok).count();
     let warn = results.iter().filter(|r| r.status == Status::Warn).count();
     let err = results.iter().filter(|r| r.status == Status::Error).count();
@@ -598,139 +762,61 @@ fn summarize(results: &[CheckResult]) -> String {
     parts.join("，") + "。"
 }
 
-/// 网卡 IP 配置（结构化，来自 Get-NetIPConfiguration）。
-#[derive(Debug, Clone, Default)]
-pub struct IpConfig {
-    pub ip: String,
-    pub prefix_len: u32,
-    pub gateway: String,
-    pub dns: Vec<String>,
-    pub dhcp_enabled: bool,
-}
-
-/// 获取指定网卡的 IP 配置。
-pub fn get_ip_config(index: u32) -> Option<IpConfig> {
-    let script = format!(
-        "$c=Get-NetIPConfiguration -InterfaceIndex {index} -ErrorAction SilentlyContinue; \
-         [PSCustomObject]@{{ \
-           ip=($c.IPv4Address | Select-Object -First 1).IPAddress; \
-           prefix=[int](($c.IPv4Address | Select-Object -First 1).PrefixLength); \
-           gateway=($c.IPv4DefaultGateway | Select-Object -First 1).NextHop; \
-           dns=@($c.DNSServer.ServerAddresses | Where-Object {{ $_ }}); \
-           dhcp=($c.NetIPv4Interface.Dhcp -eq 'Enabled') \
-         }} | ConvertTo-Json -Compress"
-    );
-    let json = powershell::run_ps_json(&script)?;
-    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
-    Some(IpConfig {
-        ip: v.get("ip").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        prefix_len: v.get("prefix").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        gateway: v.get("gateway").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        dns: v
-            .get("dns")
-            .and_then(|x| x.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        dhcp_enabled: v.get("dhcp").and_then(|x| x.as_bool()).unwrap_or(false),
-    })
-}
-
-/// ping 探测是否可达。
+/// ping 探测是否可达（单包，1s 超时）。
 pub async fn ping_ok(host: &str) -> bool {
-    tokio::task::spawn_blocking({
-        let host = host.to_string();
-        move || {
-            let out = run("ping", &["-n", "2", "-w", "2000", &host], Duration::from_secs(10));
-            out.success
-                || out.stdout.to_lowercase().contains("ttl=")
-                || out.stdout.contains("TTL=")
-        }
-    })
-    .await
-    .unwrap_or(false)
-}
-
-/// DNS 解析是否成功（nslookup）。
-pub async fn dns_resolve_ok(domain: &str) -> bool {
-    tokio::task::spawn_blocking({
-        let domain = domain.to_string();
-        move || {
-            let out = run("nslookup", &[&domain], Duration::from_secs(15));
-            let text = out.combined().to_lowercase();
-            let has_answer = text.contains("address") || text.contains("地址");
-            let failed = text.contains("can't find")
-                || text.contains("timed out")
-                || text.contains("unknown")
-                || text.contains("nonexistent");
-            has_answer && !failed
-        }
-    })
-    .await
-    .unwrap_or(false)
-}
-
-/// 系统（IE）代理设置。
-#[derive(Debug, Clone, Default)]
-pub struct IeProxy {
-    pub enabled: bool,
-    pub server: String,
-}
-
-/// 读取 HKCU Internet Settings 代理设置。
-pub fn get_ie_proxy() -> IeProxy {
-    let script = "$p=Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue; \
-                  [PSCustomObject]@{ enabled=($p.ProxyEnable -eq 1); server=[string]$p.ProxyServer } | ConvertTo-Json -Compress";
-    let Some(json) = powershell::run_ps_json(script) else {
-        return IeProxy::default();
-    };
-    let v: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
-    IeProxy {
-        enabled: v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false),
-        server: v.get("server").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+    if host.is_empty() {
+        return false;
     }
+    let host = host.to_string();
+    tokio::task::spawn_blocking(move || {
+        let out = run("ping", &["-n", "1", "-w", "1000", &host], std::time::Duration::from_secs(6));
+        out.success
+            || out.stdout.to_lowercase().contains("ttl=")
+            || out.stdout.contains("TTL=")
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// 刷新 DNS 缓存（供模块二复用）。
+pub fn flush_dns() -> bool {
+    netsh::flush_dns().success
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn mk_result(status: Status, fix: Option<FixKind>) -> CheckResult {
+        CheckResult {
+            id: "a",
+            name: "a".into(),
+            layer: Layer::Basic,
+            status,
+            detail: String::new(),
+            fix: fix.map(|k| Fix { kind: k, label: "x".into() }),
+            scope: None,
+        }
+    }
+
     #[test]
     fn summarize_counts() {
         let r = vec![
-            CheckResult {
-                id: "a",
-                name: "a".into(),
-                layer: Layer::Basic,
-                status: Status::Ok,
-                detail: String::new(),
-                fix: None,
-                scope: None,
-            },
-            CheckResult {
-                id: "b",
-                name: "b".into(),
-                layer: Layer::Basic,
-                status: Status::Error,
-                detail: String::new(),
-                fix: Some(Fix {
-                    kind: FixKind::Auto("ipconfig /flushdns".into()),
-                    label: "x".into(),
-                }),
-                scope: None,
-            },
+            mk_result(Status::Ok, None),
+            mk_result(Status::Error, Some(FixKind::Auto("cmd".into()))),
+            mk_result(Status::Warn, Some(FixKind::Manual("m".into()))),
         ];
         let s = summarize(&r);
         assert!(s.contains("正常 1"));
         assert!(s.contains("异常 1"));
+        assert!(s.contains("警告 1"));
         assert!(s.contains("可自动修复 1"));
+        assert!(s.contains("需手动处理 1"));
     }
 
     #[test]
-    fn apipa_detection() {
-        assert!(IpConfig { ip: "169.254.1.1".into(), ..Default::default() }.ip.starts_with("169.254."));
+    fn check_count() {
+        assert_eq!(CHECKS.len(), 14);
+        assert_eq!(Diagnoser::all_check_names().len(), 14);
     }
 }

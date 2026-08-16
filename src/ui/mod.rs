@@ -76,26 +76,31 @@ fn draw_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     )];
 
     // 当前上网网卡标识
-    match &app.active_adapter {
-        Some(a) => {
-            let color = if a.is_virtual() { Color::Yellow } else { Color::Green };
-            spans.push(Span::raw("  当前上网网卡: "));
-            spans.push(Span::styled(a.name.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)));
-            spans.push(Span::styled(format!(" [{}]", a.kind_label()), Style::default().fg(color)));
-        }
-        None => {
-            spans.push(Span::raw("  当前上网网卡: "));
-            spans.push(Span::styled("未找到", Style::default().fg(Color::Red)));
-        }
-    }
-
-    // 管理员标识
-    let admin = if app.is_admin {
-        Span::styled("  管理员 ✓", Style::default().fg(Color::Green))
+    if !app.env_ready {
+        spans.push(Span::raw("  正在检测网络环境…"));
+        spans.push(Span::styled(" ⏳", Style::default().fg(Color::Yellow)));
     } else {
-        Span::styled("  非管理员", Style::default().fg(Color::Yellow))
-    };
-    spans.push(admin);
+        match &app.active_adapter {
+            Some(a) => {
+                let color = if a.is_virtual() { Color::Yellow } else { Color::Green };
+                spans.push(Span::raw("  当前上网网卡: "));
+                spans.push(Span::styled(a.name.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(format!(" [{}]", a.kind_label()), Style::default().fg(color)));
+            }
+            None => {
+                spans.push(Span::raw("  当前上网网卡: "));
+                spans.push(Span::styled("未找到", Style::default().fg(Color::Red)));
+            }
+        }
+
+        // 管理员标识
+        let admin = if app.is_admin {
+            Span::styled("  管理员 ✓", Style::default().fg(Color::Green))
+        } else {
+            Span::styled("  非管理员", Style::default().fg(Color::Yellow))
+        };
+        spans.push(admin);
+    }
 
     let p = Paragraph::new(Line::from(spans));
     f.render_widget(p, area);

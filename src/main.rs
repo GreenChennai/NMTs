@@ -50,11 +50,9 @@ fn run_quick_diag() -> Result<()> {
     println!("NMTs 快速诊断");
     println!(
         "管理员权限：{}；当前上网网卡：{}",
-        if diagnoser.ctx.is_admin { "是" } else { "否" },
+        if diagnoser.ctx.probe.is_admin { "是" } else { "否" },
         diagnoser
-            .ctx
-            .active_adapter
-            .as_ref()
+            .active_adapter()
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "未找到".into())
     );
@@ -62,9 +60,9 @@ fn run_quick_diag() -> Result<()> {
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let handle = rt.spawn(async move { diagnoser.run_basic(tx).await });
+    let handle = rt.spawn(async move { diagnoser.run(tx).await });
 
-    // 阻塞等待事件，逐条打印；run_basic 结束时 tx 被 drop，recv 返回 None。
+    // 阻塞等待事件，逐条打印；run 结束时 tx 被 drop，recv 返回 None。
     while let Some(event) = rt.block_on(rx.recv()) {
         match event {
             DiagEvent::CheckStarted { index, name } => {
