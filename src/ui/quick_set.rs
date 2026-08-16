@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, IP_FORM_FIELDS};
 use crate::ui::widgets::scroll_list;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
@@ -56,6 +56,11 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
+    // 静态 IP 表单模式
+    if app.ip_form.active {
+        draw_ip_form(f, app, area);
+        return;
+    }
     // DNS 优选交互模式：右侧展示可交互的排名表
     if app.dns.interactive {
         draw_dns_table(f, app, area);
@@ -96,6 +101,46 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
     let p = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(" 操作结果 "))
+        .wrap(Wrap { trim: true });
+    f.render_widget(p, area);
+}
+
+/// 静态 IP 表单（手动填写）。
+fn draw_ip_form(f: &mut Frame, app: &App, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        " 静态 IP 配置",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    for (i, label) in IP_FORM_FIELDS.iter().enumerate() {
+        let value = &app.ip_form.fields[i];
+        if i == app.ip_form.focus {
+            lines.push(Line::from(vec![
+                Span::styled(format!(" ▸ {label}: "), Style::default().fg(Color::Black).bg(Color::Cyan)),
+                Span::styled(format!("{value}_"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!("   {label}: "), Style::default().fg(Color::DarkGray)),
+                Span::styled(if value.is_empty() { "（未填）" } else { value }, Style::default().fg(Color::White)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ 选字段 · 输入数字/点/冒号 · Backspace 删除",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        " Enter 应用（先备份） · Esc 返回",
+        Style::default().fg(Color::Yellow),
+    )));
+
+    let p = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" 静态 IP 表单 "))
         .wrap(Wrap { trim: true });
     f.render_widget(p, area);
 }

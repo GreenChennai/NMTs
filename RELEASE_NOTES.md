@@ -1,5 +1,10 @@
 # NMTs 发布说明
 
+## v1.2.0（V2.0 增量二：表单与开关）
+
+- **手动静态 IP 表单**：`net_set::set_static_ip` 落地，模块二新增「设置静态 IP」表单（IP/掩码/网关/主备 DNS 五项，↑/↓ 移焦点、字符输入、Enter 应用），应用前自动备份。
+- **IPv6 单一开关**：原「开启 IPv6 / 关闭 IPv6」两个对立项合并为「IPv6 开关」单项（读取注册表 `DisabledComponents` 判断当前状态后反向切换）。
+
 ## v1.1.0（V2.0 增量一：体验重构）
 
 - **统一 ScrollList 组件**（`ui/widgets.rs`）：`List` + 右侧 `Scrollbar` + 自动滚动保证选中项可见，替换五大模块原来的 `Paragraph` 整段直渲，根治「列表超屏不翻页」。

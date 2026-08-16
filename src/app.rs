@@ -29,10 +29,13 @@ pub enum QuickAction {
     DnsDhcp,
     IpDhcp,
     ReleaseRenew,
-    Ipv6(bool),
+    /// IPv6 单一开关（读取当前状态并反向切换）。
+    ToggleIpv6,
     TcpOptimize,
     /// DNS 优选：仅测速产出排名表，用户选中确认后才应用（见 2.4）。
     DnsOptimize,
+    /// 静态 IP 表单（手动填写 IP/掩码/网关/DNS）。
+    StaticIp,
 }
 
 /// 模块二操作项。
@@ -50,11 +53,11 @@ fn quick_items() -> Vec<QuickItem> {
         QuickItem { name: "DNS 切回自动获取", desc: "netsh set dns dhcp", action: QuickAction::DnsDhcp },
         QuickItem { name: "刷新 DNS 缓存", desc: "ipconfig /flushdns", action: QuickAction::FlushDns },
         // IP 组
+        QuickItem { name: "设置静态 IP（表单）", desc: "手动填 IP/掩码/网关/DNS", action: QuickAction::StaticIp },
         QuickItem { name: "IP 切回自动获取", desc: "netsh set address dhcp", action: QuickAction::IpDhcp },
         QuickItem { name: "释放并续租 IP", desc: "ipconfig /release + /renew", action: QuickAction::ReleaseRenew },
         // 协议组
-        QuickItem { name: "开启 IPv6", desc: "netsh ipv6 set state enabled", action: QuickAction::Ipv6(true) },
-        QuickItem { name: "关闭 IPv6", desc: "netsh ipv6 set state disabled", action: QuickAction::Ipv6(false) },
+        QuickItem { name: "IPv6 开关", desc: "读取当前状态并切换", action: QuickAction::ToggleIpv6 },
         // 优化组
         QuickItem { name: "TCP 全局优化", desc: "autotuninglevel=normal + ecn", action: QuickAction::TcpOptimize },
     ]
@@ -76,6 +79,27 @@ impl Default for QuickSetState {
             items: quick_items(),
             result: None,
             offset: 0,
+        }
+    }
+}
+
+/// 模块二静态 IP 表单字段标签。
+pub const IP_FORM_FIELDS: [&str; 5] = ["IP 地址", "子网掩码", "默认网关", "主 DNS", "备 DNS"];
+
+/// 模块二静态 IP 表单状态（手动填写）。
+#[derive(Debug)]
+pub struct IpFormState {
+    pub active: bool,
+    pub fields: [String; 5],
+    pub focus: usize,
+}
+
+impl Default for IpFormState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            fields: [String::new(), String::new(), String::new(), String::new(), String::new()],
+            focus: 0,
         }
     }
 }
@@ -190,6 +214,7 @@ pub struct App {
     pub tab: usize,
     pub diag: DiagState,
     pub quick_set: QuickSetState,
+    pub ip_form: IpFormState,
     pub term: TermState,
     pub vendor_db: VendorDb,
     pub backup: BackupState,
@@ -233,6 +258,7 @@ impl App {
             tab: 0,
             diag: DiagState::default(),
             quick_set: QuickSetState::default(),
+            ip_form: IpFormState::default(),
             term: TermState {
                 ports: serial::list_ports(),
                 ..Default::default()
@@ -294,6 +320,8 @@ impl App {
                     self.show_help = false;
                 } else if self.dns.interactive {
                     self.dns.interactive = false;
+                } else if self.ip_form.active {
+                    self.ip_form.active = false;
                 }
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
@@ -318,7 +346,9 @@ impl App {
             }
             KeyCode::Up => match self.tab {
                 1 => {
-                    if self.dns.interactive {
+                    if self.ip_form.active {
+                        self.ip_form.focus = self.ip_form.focus.saturating_sub(1);
+                    } else if self.dns.interactive {
                         let n = self.dns.results.len();
                         if n > 0 {
                             self.dns.selected = (self.dns.selected + n - 1) % n;
@@ -335,7 +365,11 @@ impl App {
             },
             KeyCode::Down => match self.tab {
                 1 => {
-                    if self.dns.interactive {
+                    if self.ip_form.active {
+                        if self.ip_form.focus + 1 < 5 {
+                            self.ip_form.focus += 1;
+                        }
+                    } else if self.dns.interactive {
                         let n = self.dns.results.len();
                         if n > 0 {
                             self.dns.selected = (self.dns.selected + 1) % n;
@@ -382,7 +416,9 @@ impl App {
                         }
                     }
                     1 => {
-                        if self.dns.interactive {
+                        if self.ip_form.active {
+                            self.submit_static_ip();
+                        } else if self.dns.interactive {
                             self.execute_dns_apply();
                         } else if let Some(item) = self.quick_set.items.get(self.quick_set.selected) {
                             let action = item.action;
@@ -396,6 +432,25 @@ impl App {
                         self.execute_backup(sel);
                     }
                     _ => {}
+                }
+            }
+            KeyCode::Backspace => {
+                if self.tab == 1 && self.ip_form.active {
+                    if let Some(f) = self.ip_form.fields.get_mut(self.ip_form.focus) {
+                        f.pop();
+                    }
+                }
+            }
+            KeyCode::Char(c) => {
+                if self.tab == 1 && self.ip_form.active {
+                    // 表单输入：数字、点、冒号、十六进制字母
+                    if c.is_ascii_digit() || c == '.' || c == ':' || "abcdefABCDEF".contains(c) {
+                        if let Some(f) = self.ip_form.fields.get_mut(self.ip_form.focus) {
+                            if f.len() < 45 {
+                                f.push(c);
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -439,9 +494,16 @@ impl App {
                     (o.success, if o.success { "已释放并重新获取 IP".into() } else { o.combined() })
                 }
             }
-            QuickAction::Ipv6(on) => {
-                let o = net_set::set_ipv6(on);
-                (o.success, if o.success { format!("IPv6 已{}", if on { "开启" } else { "关闭" }) } else { o.combined() })
+            QuickAction::ToggleIpv6 => {
+                let cur = net_set::ipv6_enabled();
+                let o = net_set::set_ipv6(!cur);
+                let target = if !cur { "启用" } else { "禁用" };
+                (o.success, if o.success { format!("IPv6 已切换为{target}") } else { o.combined() })
+            }
+            QuickAction::StaticIp => {
+                self.ip_form.active = true;
+                self.ip_form.focus = 0;
+                (true, "进入静态 IP 表单：↑/↓ 选字段 · 输入 · Enter 应用 · Esc 返回".into())
             }
             QuickAction::TcpOptimize => {
                 let o = net_set::tcp_optimize();
@@ -513,6 +575,45 @@ impl App {
         self.quick_set.result = Some(msg.clone());
         self.dns.status = Some(format!("已应用 {}，原 DNS 已备份可回退", best.provider.name));
         self.dns.interactive = false;
+    }
+
+    /// 模块二：提交静态 IP 表单。
+    fn submit_static_ip(&mut self) {
+        let iface = self
+            .active_adapter
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        if iface.is_empty() {
+            self.quick_set.result = Some("✗ 未找到当前上网网卡".into());
+            return;
+        }
+        let ip = self.ip_form.fields[0].clone();
+        let mask = self.ip_form.fields[1].clone();
+        let gw = self.ip_form.fields[2].clone();
+        let dns1 = self.ip_form.fields[3].clone();
+        let dns2 = self.ip_form.fields[4].clone();
+
+        if ip.is_empty() || mask.is_empty() {
+            self.quick_set.result = Some("✗ 请至少填写 IP 地址和子网掩码".into());
+            return;
+        }
+
+        // 应用前备份
+        let _ = net_set::backup_network(&crate::config::app_root());
+        let o = net_set::set_static_ip(&iface, &ip, &mask, if gw.is_empty() { "" } else { &gw });
+        if o.success {
+            if !dns1.is_empty() {
+                let _ = net_set::set_dns(&iface, &dns1);
+            }
+            if !dns2.is_empty() {
+                let _ = net_set::add_dns(&iface, &dns2);
+            }
+            self.quick_set.result = Some(format!("✓ 已设置静态 IP {ip}/{mask} 网关 {}", if gw.is_empty() { "无" } else { &gw }));
+            self.ip_form.active = false;
+        } else {
+            self.quick_set.result = Some(format!("✗ {}", o.combined()));
+        }
     }
 
     /// 模块三：导航命令模板。

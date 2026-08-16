@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::windows::{netsh, run, CmdOutput};
+use crate::windows::{netsh, powershell, run, CmdOutput};
 
 /// 备份目录相对程序根。
 pub fn backup_dir(root: &Path) -> PathBuf {
@@ -78,6 +78,11 @@ pub fn flush_dns() -> CmdOutput {
     netsh::flush_dns()
 }
 
+/// 设置静态 IP / 掩码 / 网关。
+pub fn set_static_ip(iface: &str, ip: &str, mask: &str, gw: &str) -> CmdOutput {
+    netsh::set_static_ip(iface, ip, mask, gw)
+}
+
 /// 设置静态 DNS（主）。
 pub fn set_dns(iface: &str, dns: &str) -> CmdOutput {
     netsh::set_dns(iface, dns)
@@ -119,6 +124,20 @@ pub fn set_ipv6(enabled: bool) -> CmdOutput {
         "state",
         if enabled { "enabled" } else { "disabled" },
     ])
+}
+
+/// 查询 IPv6 是否启用（注册表 DisabledComponents）。
+pub fn ipv6_enabled() -> bool {
+    let script = "$d=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters' \
+                  -Name DisabledComponents -ErrorAction SilentlyContinue).DisabledComponents; \
+                  [PSCustomObject]@{ v=[int]$d } | ConvertTo-Json -Compress";
+    let Some(json) = powershell::run_ps_json(script) else {
+        return true;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else {
+        return true;
+    };
+    v.get("v").and_then(|x| x.as_i64()).unwrap_or(0) == 0
 }
 
 /// TCP 全局优化。
