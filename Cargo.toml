@@ -1,0 +1,40 @@
+[package]
+name = "nmts"
+version = "0.1.0"
+edition = "2021"
+description = "NMTs — Network Maintenance Tool set（Windows 网络维护工具集）"
+authors = ["GreenChennai <luvse@foxmail.com>"]
+license = "GPL-3.0-or-later"
+rust-version = "1.74"
+default-run = "nmts"
+
+[[bin]]
+name = "nmts"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+encoding_rs = "0.8"
+ratatui = "0.29"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

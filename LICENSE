@@ -1,0 +1,18 @@
+GNU GENERAL PUBLIC LICENSE
+Version 3, 29 June 2007
+
+Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+
+NMTs（Network Maintenance Tool set）依据 GNU 通用公共许可证第三版或（按你的选择）任何更新版本发布。
+
+本程序是自由软件：你可以在自由软件基金会发布的 GNU 通用公共许可证
+（版本 3，或按你的选择任何更新版本）的条款下再发布和/或修改它。
+
+本程序发布的目的是希望它有用，但没有任何担保；甚至没有适销性或
+特定用途适用性的默示担保。详情见 GNU 通用公共许可证。
+
+你应该已经随本程序收到一份 GNU 通用公共许可证的副本。
+如果没有，请参阅 <https://www.gnu.org/licenses/>。
+
+完整许可证文本：<https://www.gnu.org/licenses/gpl-3.0.txt>
+SPDX-License-Identifier: GPL-3.0-or-later

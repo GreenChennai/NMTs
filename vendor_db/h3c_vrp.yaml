@@ -1,0 +1,188 @@
+# H3C VRP 命令模板（与华为同属 VRP 体系，命令基本一致）
+vendor: h3c_vrp
+label: "H3C (VRP)"
+prompt_features: ["<", ">", "[", "]"]
+enter_config: "system-view"
+exit_config: "quit"
+show_run: "display current-configuration"
+save_config: "save"
+
+categories:
+  - id: system
+    label: "系统管理"
+  - id: interface
+    label: "接口配置"
+  - id: vlan
+    label: "VLAN 配置"
+  - id: routing
+    label: "路由配置"
+  - id: acl
+    label: "ACL 访问控制"
+  - id: diagnose
+    label: "诊断排查"
+
+commands:
+  - id: enter_config
+    category: system
+    label: "进入系统视图"
+    command: "system-view"
+  - id: exit_config
+    category: system
+    label: "退出系统视图"
+    command: "quit"
+  - id: set_hostname
+    category: system
+    label: "设置主机名"
+    command: "sysname {name}"
+    args:
+      - { name: "name", label: "主机名", type: "string" }
+  - id: show_run
+    category: system
+    label: "查看当前配置"
+    command: "display current-configuration"
+  - id: save_config
+    category: system
+    label: "保存配置"
+    command: "save"
+    interactive: true
+    confirm: "y"
+  - id: reboot
+    category: system
+    label: "重启设备"
+    command: "reboot"
+    interactive: true
+    confirm: "y"
+  - id: show_clock
+    category: system
+    label: "查看时间"
+    command: "display clock"
+  - id: ntp_server
+    category: system
+    label: "NTP 同步"
+    command: "ntp-service unicast-server {ip}"
+    args:
+      - { name: "ip", label: "NTP 服务器", type: "ip" }
+
+  - id: enter_if
+    category: interface
+    label: "进入接口"
+    command: "interface {if}"
+    args:
+      - { name: "if", label: "接口名", type: "string", placeholder: "GigabitEthernet0/0/1" }
+  - id: set_ip
+    category: interface
+    label: "配置 IP 地址"
+    command: "ip address {ip} {mask}"
+    args:
+      - { name: "ip", label: "IP 地址", type: "ip" }
+      - { name: "mask", label: "掩码", type: "mask" }
+  - id: undo_shutdown
+    category: interface
+    label: "启用接口"
+    command: "undo shutdown"
+  - id: shutdown
+    category: interface
+    label: "关闭接口"
+    command: "shutdown"
+  - id: set_desc
+    category: interface
+    label: "接口描述"
+    command: "description {text}"
+    args:
+      - { name: "text", label: "描述", type: "string" }
+  - id: show_if_brief
+    category: interface
+    label: "查看接口状态"
+    command: "display interface brief"
+
+  - id: create_vlan
+    category: vlan
+    label: "创建 VLAN"
+    command: "vlan batch {vlan}"
+    args:
+      - { name: "vlan", label: "VLAN ID（支持 10 to 20）", type: "string" }
+  - id: port_access
+    category: vlan
+    label: "Access 端口"
+    command: "port default vlan {vlan}"
+    args:
+      - { name: "vlan", label: "VLAN ID", type: "int" }
+  - id: port_trunk
+    category: vlan
+    label: "Trunk 放行 VLAN"
+    command: "port trunk allow-pass vlan {vlan}"
+    args:
+      - { name: "vlan", label: "VLAN ID", type: "string" }
+  - id: show_vlan
+    category: vlan
+    label: "查看 VLAN"
+    command: "display vlan"
+
+  - id: static_route
+    category: routing
+    label: "静态路由"
+    command: "ip route-static {dest} {mask} {nh}"
+    args:
+      - { name: "dest", label: "目的网段", type: "ip" }
+      - { name: "mask", label: "掩码", type: "mask" }
+      - { name: "nh", label: "下一跳", type: "ip" }
+  - id: default_route
+    category: routing
+    label: "默认路由"
+    command: "ip route-static 0.0.0.0 0.0.0.0 {nh}"
+    args:
+      - { name: "nh", label: "下一跳", type: "ip" }
+  - id: show_route
+    category: routing
+    label: "查看路由表"
+    command: "display ip routing-table"
+
+  - id: acl_basic
+    category: acl
+    label: "基本 ACL"
+    command: "acl {id}"
+    args:
+      - { name: "id", label: "ACL 编号 (2000-2999)", type: "int" }
+  - id: acl_rule
+    category: acl
+    label: "ACL 规则"
+    command: "rule {rule} permit source {ip} {mask}"
+    args:
+      - { name: "rule", label: "规则号", type: "int" }
+      - { name: "ip", label: "源 IP", type: "ip" }
+      - { name: "mask", label: "通配符掩码", type: "string" }
+  - id: acl_apply
+    category: acl
+    label: "接口应用 ACL"
+    command: "traffic-filter inbound acl {id}"
+    args:
+      - { name: "id", label: "ACL 编号", type: "int" }
+
+  - id: ping
+    category: diagnose
+    label: "Ping"
+    command: "ping {ip}"
+    args:
+      - { name: "ip", label: "目标 IP", type: "ip" }
+  - id: tracert
+    category: diagnose
+    label: "Tracert"
+    command: "tracert {ip}"
+    args:
+      - { name: "ip", label: "目标 IP", type: "ip" }
+  - id: show_arp
+    category: diagnose
+    label: "查看 ARP 表"
+    command: "display arp"
+  - id: show_mac
+    category: diagnose
+    label: "查看 MAC 表"
+    command: "display mac-address"
+  - id: show_log
+    category: diagnose
+    label: "查看日志"
+    command: "display logbuffer"
+  - id: show_cpu
+    category: diagnose
+    label: "查看 CPU 利用率"
+    command: "display cpu-usage"

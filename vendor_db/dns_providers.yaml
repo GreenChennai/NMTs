@@ -1,0 +1,475 @@
+# NMTs DNS 优选数据源（由 DNS优选.md 归一，含 CN 国内节点补齐）
+# 字段：country / name / category / primary / secondary / recommended
+version: 1
+
+categories:
+  - id: ipv4_default
+    protocol: ipv4
+    kind: default
+    label: "默认 IPv4"
+  - id: ipv4_family
+    protocol: ipv4
+    kind: family
+    label: "家庭过滤 IPv4"
+  - id: ipv4_secure
+    protocol: ipv4
+    kind: secure
+    label: "安全拦截 IPv4"
+  - id: ipv6_default
+    protocol: ipv6
+    kind: default
+    label: "默认 IPv6"
+  - id: ipv6_family
+    protocol: ipv6
+    kind: family
+    label: "家庭过滤 IPv6"
+  - id: ipv6_secure
+    protocol: ipv6
+    kind: secure
+    label: "安全拦截 IPv6"
+
+providers:
+  - country: "CN"
+    name: "114DNS"
+    category: ipv4_default
+    primary: "114.114.114.114"
+    secondary: "114.114.115.115"
+    recommended: true
+  - country: "CN"
+    name: "百度 Baidu DNS"
+    category: ipv4_default
+    primary: "180.76.76.76"
+    secondary: ""
+    recommended: true
+  - country: "CN"
+    name: "腾讯 DNSPod"
+    category: ipv4_default
+    primary: "119.29.29.29"
+    secondary: "119.28.28.28"
+    recommended: true
+  - country: "CN"
+    name: "阿里 AliDNS"
+    category: ipv4_default
+    primary: "223.5.5.5"
+    secondary: "223.6.6.6"
+    recommended: true
+  - country: "US"
+    name: "Google Public DNS"
+    category: ipv4_default
+    primary: "8.8.8.8"
+    secondary: "8.8.4.4"
+    recommended: true
+  - country: "US"
+    name: "OpenDNS"
+    category: ipv4_default
+    primary: "208.67.222.222"
+    secondary: "208.67.220.220"
+    recommended: true
+  - country: "US"
+    name: "OpenDNS - 2"
+    category: ipv4_default
+    primary: "208.67.222.220"
+    secondary: "208.67.220.222"
+    recommended: true
+  - country: "RU"
+    name: "Yandex"
+    category: ipv4_default
+    primary: "77.88.8.1"
+    secondary: "77.88.8.8"
+    recommended: true
+  - country: "AU"
+    name: "Cloudflare"
+    category: ipv4_default
+    primary: "1.1.1.1"
+    secondary: "1.0.0.1"
+    recommended: true
+  - country: "US"
+    name: "Norton ConnectSafe Basic"
+    category: ipv4_default
+    primary: "199.85.126.10"
+    secondary: "199.85.127.10"
+    recommended: true
+  - country: "US"
+    name: "Level 3 - A"
+    category: ipv4_default
+    primary: "209.244.0.3"
+    secondary: "209.244.0.4"
+    recommended: true
+  - country: "US"
+    name: "Level 3 - B"
+    category: ipv4_default
+    primary: "4.2.2.1"
+    secondary: "4.2.2.2"
+    recommended: true
+  - country: "US"
+    name: "Level 3 - C"
+    category: ipv4_default
+    primary: "4.2.2.3"
+    secondary: "4.2.2.4"
+    recommended: true
+  - country: "US"
+    name: "Level 3 - D"
+    category: ipv4_default
+    primary: "4.2.2.5"
+    secondary: "4.2.2.6"
+    recommended: true
+  - country: "US"
+    name: "Comodo Secure"
+    category: ipv4_default
+    primary: "8.26.56.26"
+    secondary: "8.20.247.20"
+    recommended: true
+  - country: "US"
+    name: "Dyn"
+    category: ipv4_default
+    primary: "216.146.35.35"
+    secondary: "216.146.36.36"
+    recommended: true
+  - country: "US"
+    name: "Norton DNS"
+    category: ipv4_default
+    primary: "198.153.192.1"
+    secondary: "198.153.194.1"
+    recommended: true
+  - country: "US"
+    name: "Comodo"
+    category: ipv4_default
+    primary: "156.154.70.22"
+    secondary: "156.154.71.22"
+    recommended: true
+  - country: "US"
+    name: "VeriSign Public DNS"
+    category: ipv4_default
+    primary: "64.6.64.6"
+    secondary: "64.6.65.6"
+    recommended: true
+  - country: "US"
+    name: "Qwest"
+    category: ipv4_default
+    primary: "205.171.3.65"
+    secondary: "205.171.2.65"
+    recommended: true
+  - country: "US"
+    name: "Sprint"
+    category: ipv4_default
+    primary: "204.97.212.10"
+    secondary: "204.117.214.10"
+    recommended: true
+  - country: "DK"
+    name: "Censurfridns"
+    category: ipv4_default
+    primary: "89.233.43.71"
+    secondary: "91.239.100.100"
+    recommended: true
+  - country: "RU"
+    name: "Safe DNS"
+    category: ipv4_default
+    primary: "195.46.39.39"
+    secondary: "195.46.39.40"
+    recommended: true
+  - country: "DE"
+    name: "DNS WATCH"
+    category: ipv4_default
+    primary: "84.200.69.80"
+    secondary: "84.200.70.40"
+    recommended: true
+  - country: "AT"
+    name: "FreeDNS"
+    category: ipv4_default
+    primary: "37.235.1.174"
+    secondary: "37.235.1.177"
+    recommended: true
+  - country: "US"
+    name: "Sprintlink"
+    category: ipv4_default
+    primary: "199.2.252.10"
+    secondary: "204.97.212.10"
+    recommended: true
+  - country: "US"
+    name: "UltraDNS"
+    category: ipv4_default
+    primary: "204.69.234.1"
+    secondary: "204.74.101.1"
+    recommended: true
+  - country: "GB"
+    name: "Zen Internet"
+    category: ipv4_default
+    primary: "212.23.8.1"
+    secondary: "212.23.3.1"
+    recommended: true
+  - country: "GB"
+    name: "Orange DNS"
+    category: ipv4_default
+    primary: "195.92.195.94"
+    secondary: "195.92.195.95"
+    recommended: true
+  - country: "US"
+    name: "Hurricane Electric"
+    category: ipv4_default
+    primary: "74.82.42.42"
+    secondary: ""
+    recommended: true
+  - country: "ES"
+    name: "puntCAT"
+    category: ipv4_default
+    primary: "109.69.8.51"
+    secondary: ""
+    recommended: true
+  - country: "NL"
+    name: "Freenom World"
+    category: ipv4_default
+    primary: "80.80.80.80"
+    secondary: "80.80.81.81"
+    recommended: true
+  - country: "FR"
+    name: "FDN"
+    category: ipv4_default
+    primary: "80.67.169.12"
+    secondary: "80.67.169.40"
+    recommended: true
+  - country: "US"
+    name: "Neustar 1"
+    category: ipv4_default
+    primary: "156.154.70.1"
+    secondary: "156.154.71.1"
+    recommended: true
+  - country: "US"
+    name: "Neustar 2"
+    category: ipv4_default
+    primary: "156.154.70.5"
+    secondary: "156.154.71.5"
+    recommended: true
+  - country: "RU"
+    name: "AdGuard"
+    category: ipv4_default
+    primary: "176.103.130.130"
+    secondary: "176.103.130.131"
+    recommended: true
+  - country: "US"
+    name: "Quad9 Security"
+    category: ipv4_default
+    primary: "9.9.9.9"
+    secondary: "149.112.112.112"
+    recommended: true
+  - country: "US"
+    name: "Quad9 No Security"
+    category: ipv4_default
+    primary: "9.9.9.10"
+    secondary: "149.112.112.10"
+    recommended: true
+  - country: "BG"
+    name: "MegaLan"
+    category: ipv4_default
+    primary: "95.111.55.251"
+    secondary: "95.111.55.250"
+    recommended: false
+  - country: "US"
+    name: "OpenDNS Family"
+    category: ipv4_family
+    primary: "208.67.222.123"
+    secondary: "208.67.220.123"
+    recommended: true
+  - country: "US"
+    name: "Norton ConnectSafe Family"
+    category: ipv4_family
+    primary: "199.85.126.30"
+    secondary: "199.85.127.30"
+    recommended: true
+  - country: "RU"
+    name: "Yandex Family"
+    category: ipv4_family
+    primary: "77.88.8.7"
+    secondary: "77.88.8.3"
+    recommended: true
+  - country: "IE"
+    name: "CleanBrowsing Family"
+    category: ipv4_family
+    primary: "185.228.168.168"
+    secondary: "185.228.169.168"
+    recommended: true
+  - country: "IE"
+    name: "CleanBrowsing Adult Filter"
+    category: ipv4_family
+    primary: "185.228.168.10"
+    secondary: "185.228.169.11"
+    recommended: true
+  - country: "US"
+    name: "Neustar Family Secure"
+    category: ipv4_family
+    primary: "156.154.70.3"
+    secondary: "156.154.71.3"
+    recommended: true
+  - country: "US"
+    name: "Neustar Business Secure"
+    category: ipv4_family
+    primary: "156.154.70.4"
+    secondary: "156.154.71.4"
+    recommended: true
+  - country: "RU"
+    name: "AdGuard Family"
+    category: ipv4_family
+    primary: "176.103.130.132"
+    secondary: "176.103.130.134"
+    recommended: true
+  - country: "US"
+    name: "Norton ConnectSafe Secure"
+    category: ipv4_secure
+    primary: "199.85.126.20"
+    secondary: "199.85.127.20"
+    recommended: true
+  - country: "RU"
+    name: "Yandex Safe"
+    category: ipv4_secure
+    primary: "77.88.8.88"
+    secondary: "77.88.8.2"
+    recommended: true
+  - country: "US"
+    name: "Comodo Secure"
+    category: ipv4_secure
+    primary: "8.26.56.26"
+    secondary: "8.20.247.20"
+    recommended: true
+  - country: "IE"
+    name: "CleanBrowsing Secure"
+    category: ipv4_secure
+    primary: "185.228.168.9"
+    secondary: "185.228.169.9"
+    recommended: true
+  - country: "US"
+    name: "NeustarThreat Protection"
+    category: ipv4_secure
+    primary: "156.154.70.2"
+    secondary: "156.154.71.2"
+    recommended: true
+  - country: "US"
+    name: "Google Public DNS"
+    category: ipv6_default
+    primary: "2001:4860:4860::8888"
+    secondary: "2001:4860:4860::8844"
+    recommended: true
+  - country: "US"
+    name: "OpenDNS Sandbox"
+    category: ipv6_default
+    primary: "2620:0:ccc::2"
+    secondary: "2620:0:ccd::2"
+    recommended: true
+  - country: "RU"
+    name: "Yandex DNS"
+    category: ipv6_default
+    primary: "2a02:6b8::feed:0ff"
+    secondary: "2a02:6b8:0:1::feed:0ff"
+    recommended: true
+  - country: "DK"
+    name: "Censurfridns"
+    category: ipv6_default
+    primary: "2001:67c:28a4::"
+    secondary: "2002:d596:2a92:1:71:53::"
+    recommended: true
+  - country: "US"
+    name: "Cesidian Root"
+    category: ipv6_default
+    primary: "2001:470:6c:521::2"
+    secondary: "2001:470:6d:521::1"
+    recommended: true
+  - country: "US"
+    name: "DNS WATCH"
+    category: ipv6_default
+    primary: "2001:1608:10:25::1c04:b12f"
+    secondary: "2001:1608:10:25::9249:d69b"
+    recommended: true
+  - country: "US"
+    name: "FDN"
+    category: ipv6_default
+    primary: "2001:910:800::12"
+    secondary: "2001:910:800::40"
+    recommended: true
+  - country: "AU"
+    name: "Cloudflare"
+    category: ipv6_default
+    primary: "2606:4700:4700::1111"
+    secondary: "2606:4700:4700::1001"
+    recommended: true
+  - country: "US"
+    name: "Neustar 1"
+    category: ipv6_default
+    primary: "2610:a1:1018::1"
+    secondary: "2610:a1:1019::1"
+    recommended: true
+  - country: "US"
+    name: "Neustar 2"
+    category: ipv6_default
+    primary: "2610:a1:1018::5"
+    secondary: "2610:a1:1019::5"
+    recommended: true
+  - country: "RU"
+    name: "AdGuard"
+    category: ipv6_default
+    primary: "2a00:5a60::ad1:0ff"
+    secondary: "2a00:5a60::ad2:0ff"
+    recommended: true
+  - country: "US"
+    name: "Quad9 Security"
+    category: ipv6_default
+    primary: "2620:fe::fe"
+    secondary: "2620:fe::9"
+    recommended: true
+  - country: "US"
+    name: "Quad9 No Security"
+    category: ipv6_default
+    primary: "2620:fe::10"
+    secondary: "2620:fe::fe:10"
+    recommended: true
+  - country: "RU"
+    name: "Yandex Family"
+    category: ipv6_family
+    primary: "2a02:6b8::feed:a11"
+    secondary: "2a02:6b8:0:1::feed:a11"
+    recommended: true
+  - country: "IE"
+    name: "CleanBrowsing Family"
+    category: ipv6_family
+    primary: "2a0d:2a00:1::"
+    secondary: "2a0d:2a00:2::"
+    recommended: true
+  - country: "IE"
+    name: "CleanBrowsing Adult Filter"
+    category: ipv6_family
+    primary: "2a0d:2a00:1::1"
+    secondary: "2a0d:2a00:2::1"
+    recommended: true
+  - country: "US"
+    name: "Neustar Family Secure"
+    category: ipv6_family
+    primary: "2610:a1:1018::3"
+    secondary: "2610:a1:1019::3"
+    recommended: true
+  - country: "US"
+    name: "Neustar Business Secure"
+    category: ipv6_family
+    primary: "2610:a1:1018::4"
+    secondary: "2610:a1:1019::4"
+    recommended: true
+  - country: "RU"
+    name: "AdGuard Family"
+    category: ipv6_family
+    primary: "2a00:5a60::bad1:0ff"
+    secondary: "2a00:5a60::bad2:0ff"
+    recommended: true
+  - country: "RU"
+    name: "Yandex Safe"
+    category: ipv6_secure
+    primary: "2a02:6b8::feed:bad"
+    secondary: "2a02:6b8:0:1::feed:bad"
+    recommended: true
+  - country: "IE"
+    name: "CleanBrowsing Secure"
+    category: ipv6_secure
+    primary: "2a0d:2a00:1::2"
+    secondary: "2a0d:2a00:2::2"
+    recommended: true
+  - country: "US"
+    name: "NeustarThreat Protection"
+    category: ipv6_secure
+    primary: "2610:a1:1018::2"
+    secondary: "2610:a1:1019::2"
+    recommended: true

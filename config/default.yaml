@@ -1,0 +1,38 @@
+# NMTs 配置
+version: 1
+
+# 通用
+admin_required: true          # 修改类操作是否需要管理员
+log_level: "info"             # trace|debug|info|warn|error
+log_keep_days: 7              # 日志保留天数
+
+# DNS 优选（数据源：vendor_db/dns_providers.yaml）
+dns_preference:
+  categories: ["default", "family", "secure"]   # 候选类别
+  prefer_ipv: "ipv4"            # ipv4 | ipv6 | both
+  prefer_country: "CN"          # 优先同国家/地区提供商（Geo 就近）
+  test:
+    probe_domain: "www.baidu.com"   # 测速解析的域名（国内优先）
+    samples: 5                  # 每候选探测次数
+    timeout_ms: 1500
+    rank_by: "latency"          # latency | reliability
+  apply_when_better_than_current: true   # 仅当优选结果明显优于当前 DNS 时才建议应用
+
+# 网工工具（模块三）
+terminal:
+  default_baud_rates: [9600, 115200, 19200, 38400, 57600]  # 试探顺序
+  timeout_ms: 3000
+  vendors: ["huawei_vrp", "h3c_vrp", "cisco_ios"]
+  ensp_compatible: true
+
+# 拓扑图（模块四）
+topology:
+  export_format: "d2"         # d2(推荐) | dot(需 graphviz)
+  auto_cli: true              # 根据拓扑自动推导 CLI
+  open_after_export: true     # 导出后调用系统默认程序打开 SVG/PNG
+
+# 备份（模块五）
+backup:
+  dir: "./backups"
+  keep_days: 30
+  bundle_ext: "nmtsbak"       # 归档扩展名

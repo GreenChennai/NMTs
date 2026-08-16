@@ -1,0 +1,26 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# 构建产物
+/dist
+/dist_build_*
+/build_work_*
+构建/
+
+# 运行时产物
+/config/config.json
+/logs/
+/backups/
+*.nmtsbak
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# 系统
+Thumbs.db
+desktop.ini
