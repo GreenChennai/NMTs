@@ -46,10 +46,12 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/NMTs-portable/* -DestinationPath dist/NMTs-windows-portable.zip
 
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
       - name: Build installer (NSIS)
-        uses: joncloud/makensis-action@v4
-        with:
-          script-file: installer.nsi
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
