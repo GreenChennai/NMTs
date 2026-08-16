@@ -21,7 +21,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let hint = if app.diag.running {
         Span::styled(" 诊断进行中…", Style::default().fg(Color::Yellow))
     } else if app.diag.started {
-        Span::styled(" 诊断完成，按 R 重新运行", Style::default().fg(Color::DarkGray))
+        Span::styled(
+            " 诊断完成，按 R 重新运行 · F 执行自动修复",
+            Style::default().fg(Color::DarkGray),
+        )
     } else {
         Span::styled(" 按 Enter / R 开始诊断", Style::default().fg(Color::Cyan))
     };

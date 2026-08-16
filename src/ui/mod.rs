@@ -142,8 +142,11 @@ fn draw_help(f: &mut Frame, area: ratatui::layout::Rect) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled("  快捷键", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  Enter / R    运行诊断（模块一）"),
+        Line::from("  Enter / R    运行诊断（模块一）/ 执行选中项"),
         Line::from("  ← / →       切换模块"),
+        Line::from("  [ / ]        网工终端：切换厂商"),
+        Line::from("  F            诊断完成后：执行自动修复"),
+        Line::from("  E / D        拓扑：导出 D2 / 下发 CLI"),
         Line::from("  H            显示 / 隐藏帮助"),
         Line::from("  Q / Esc      退出（Esc 仅关闭帮助）"),
         Line::from(""),

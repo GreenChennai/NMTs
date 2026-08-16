@@ -341,6 +341,16 @@ impl App {
                     self.topo_export_d2();
                 }
             }
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                if self.tab == 0 && self.diag.started && !self.diag.running {
+                    self.execute_auto_fixes();
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if self.tab == 3 {
+                    self.topo_deploy();
+                }
+            }
             KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
                 match self.tab {
                     0 => {
@@ -575,6 +585,65 @@ impl App {
             }
             Err(e) => self.topo.status = Some(format!("导出失败: {e}")),
         }
+    }
+
+    /// 模块四：把已生成的 CLI 逐行下发到第一个串口。
+    fn topo_deploy(&mut self) {
+        let Some(cli) = self.topo.cli.clone() else {
+            self.topo.status = Some("请先按 Enter 生成 CLI".into());
+            return;
+        };
+        match self.term.ports.first() {
+            Some(p) => {
+                let name = p.name.clone();
+                self.topo.status = Some(match serial::SerialSession::open(&name, 9600) {
+                    Ok(mut s) => {
+                        let mut sent = 0;
+                        for line in cli.lines() {
+                            if !line.trim().is_empty() && s.write_line(line).is_ok() {
+                                sent += 1;
+                            }
+                        }
+                        format!("已下发 {sent} 行到 {name}")
+                    }
+                    Err(e) => format!("连接 {name} 失败: {e}"),
+                });
+            }
+            None => self.topo.status = Some("未检测到串口，无法下发".into()),
+        }
+    }
+
+    /// 诊断→修复闭环：执行所有「自动修复」项。
+    fn execute_auto_fixes(&mut self) {
+        let fixes: Vec<String> = self
+            .diag
+            .results
+            .iter()
+            .filter_map(|r| r.as_ref())
+            .filter_map(|r| r.fix.as_ref())
+            .filter_map(|f| match &f.kind {
+                crate::core::net_diag::FixKind::Auto(cmd) => Some(cmd.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if fixes.is_empty() {
+            self.diag.summary = Some("无可自动修复项".into());
+            return;
+        }
+
+        let mut done = 0;
+        for cmd in fixes {
+            let out = crate::windows::run("cmd", &["/c", &cmd], std::time::Duration::from_secs(30));
+            self.diag.logs.push(format!("执行：{cmd}"));
+            if out.success {
+                done += 1;
+            } else {
+                let first = out.combined().lines().next().unwrap_or("失败").to_string();
+                self.diag.logs.push(format!("  ✗ {first}"));
+            }
+        }
+        self.diag.summary = Some(format!("已执行 {done} 项自动修复"));
     }
 
     /// 启动诊断（后台重新探测 + 异步执行，事件经 mpsc 回传）。

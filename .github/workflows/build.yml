@@ -32,12 +32,33 @@ jobs:
       - name: Build (release)
         run: cargo build --release --locked
 
-      - name: Upload artifact (exe)
+      - name: Stage portable bundle
+        shell: pwsh
+        run: |
+          $dist = "dist/NMTs-portable"
+          New-Item -ItemType Directory -Force -Path $dist, "$dist/config", "$dist/vendor_db" | Out-Null
+          Copy-Item target/release/nmts.exe $dist/
+          Copy-Item config/default.yaml $dist/config/
+          Copy-Item vendor_db/*.yaml $dist/vendor_db/
+          Copy-Item README.md, LICENSE, RELEASE_NOTES.md $dist/
+
+      - name: Package zip (portable)
+        shell: pwsh
+        run: Compress-Archive -Path dist/NMTs-portable/* -DestinationPath dist/NMTs-windows-portable.zip
+
+      - name: Build installer (NSIS)
+        uses: joncloud/makensis-action@v4
+        with:
+          script-file: installer.nsi
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nmts-windows-x86_64
           path: |
             target/release/nmts.exe
+            dist/NMTs-windows-portable.zip
+            NMTs-1.0.0-setup.exe
           if-no-files-found: error
 
   release:
@@ -59,7 +80,10 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/nmts.exe
+          files: |
+            dist/nmts.exe
+            dist/NMTs-windows-portable.zip
+            dist/NMTs-1.0.0-setup.exe
           prerelease: true
           body_path: RELEASE_NOTES.md
         env:
