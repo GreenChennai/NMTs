@@ -2,7 +2,7 @@
   <h1 align="center">NMTs · 网络维护工具集</h1>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.3.0-orange.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/lang-Rust-DEA584.svg" alt="Language">
   <img src="https://img.shields.io/badge/UI-ratatui%20%2B%20crossterm-4D4D4D.svg" alt="UI">
@@ -37,7 +37,7 @@
 | --- | --- | --- |
 | v1.1.0 | 统一 ScrollList + DNS 优选改确认 + 删冗余/分组 | ✅ 完成 |
 | v1.2.0 | 手动静态 IP 表单 + DHCP/IPv6 单一开关 | ✅ 完成 |
-| v1.3.0 | 网工工具连接状态机 + eNSP + 持久会话 | ⏳ |
+| v1.3.0 | 网工工具连接状态机 + eNSP + 持久会话 | ✅ 完成 |
 | v1.4.0 | 配置备份支持设备 running-config | ⏳ |
 | v1.5.0 | 拓扑编辑器外置（React Flow + Python 独立窗口） | ⏳ |
 | v1.6.0 | 统一组件规范收口 + 回归测试 + 安装包 | ⏳ |

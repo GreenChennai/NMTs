@@ -3,6 +3,7 @@
 //! 启动提速：环境探测（PowerShell 合并查询）放在 `spawn_blocking` 后台执行，
 //! UI 立即渲染，探测结果经 mpsc 回传后刷新状态栏，避免启动阻塞 3~4 秒。
 
+use std::io::{Read, Write};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -104,14 +105,57 @@ impl Default for IpFormState {
     }
 }
 
+/// 网工工具连接状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnState {
+    Disconnected,
+    Scanning,
+    Connected,
+}
+
+/// 网工工具终端事件（后台读线程 / 连接结果回传）。
+pub enum TermEvent {
+    Echo(String),
+    Connected(std::sync::Arc<std::sync::Mutex<Box<dyn serialport::SerialPort>>>),
+    Failed(String),
+}
+
 /// 模块三（网工终端）状态。
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TermState {
+    pub conn: ConnState,
     pub vendor_idx: usize,
     pub cmd_idx: usize,
     pub cmd_offset: usize,
     pub ports: Vec<serial::PortInfo>,
+    pub selected_port: usize,
+    pub port_offset: usize,
+    pub baud: u32,
+    /// 终端实时回显。
+    pub output: Vec<String>,
+    /// 手动输入缓冲。
+    pub input: String,
+    pub input_mode: bool,
     pub status: Option<String>,
+}
+
+impl Default for TermState {
+    fn default() -> Self {
+        Self {
+            conn: ConnState::Disconnected,
+            vendor_idx: 0,
+            cmd_idx: 0,
+            cmd_offset: 0,
+            ports: Vec::new(),
+            selected_port: 0,
+            port_offset: 0,
+            baud: 9600,
+            output: Vec::new(),
+            input: String::new(),
+            input_mode: false,
+            status: None,
+        }
+    }
 }
 
 /// 模块五（配置备份）状态。
@@ -229,6 +273,10 @@ pub struct App {
     probe_rx: UnboundedReceiver<NetProbe>,
     dns_tx: UnboundedSender<DnsUpdate>,
     dns_rx: UnboundedReceiver<DnsUpdate>,
+    term_tx: UnboundedSender<TermEvent>,
+    term_rx: UnboundedReceiver<TermEvent>,
+    /// 持久串口会话（后台读线程 + 主线程写共享）。
+    session: Option<std::sync::Arc<std::sync::Mutex<Box<dyn serialport::SerialPort>>>>,
     rt: Handle,
 }
 
@@ -241,6 +289,7 @@ impl App {
     ) -> Self {
         let (probe_tx, probe_rx) = tokio::sync::mpsc::unbounded_channel();
         let (dns_tx, dns_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (term_tx, term_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // 后台探测（不阻塞 UI）
         let probe_tx_clone = probe_tx.clone();
@@ -276,6 +325,9 @@ impl App {
             probe_rx,
             dns_tx,
             dns_rx,
+            term_tx,
+            term_rx,
+            session: None,
             rt,
         }
     }
@@ -296,6 +348,7 @@ impl App {
             self.drain_events();
             self.drain_probe();
             self.drain_dns();
+            self.drain_term();
             terminal.draw(|f| ui::draw(f, self))?;
 
             if event::poll(Duration::from_millis(50))? {
@@ -322,6 +375,8 @@ impl App {
                     self.dns.interactive = false;
                 } else if self.ip_form.active {
                     self.ip_form.active = false;
+                } else if self.term.input_mode {
+                    self.term.input_mode = false;
                 }
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
@@ -358,7 +413,16 @@ impl App {
                         self.quick_set.selected = (self.quick_set.selected + n - 1) % n;
                     }
                 }
-                2 => self.term_move(-1),
+                2 => {
+                    if self.term.conn == ConnState::Disconnected {
+                        if !self.term.ports.is_empty() {
+                            let n = self.term.ports.len();
+                            self.term.selected_port = (self.term.selected_port + n - 1) % n;
+                        }
+                    } else if !self.term.input_mode {
+                        self.term_move(-1);
+                    }
+                }
                 3 => self.topo.selected = self.topo.selected.saturating_sub(1),
                 4 => self.backup.selected = self.backup.selected.saturating_sub(1),
                 _ => {}
@@ -379,7 +443,16 @@ impl App {
                         self.quick_set.selected = (self.quick_set.selected + 1) % n;
                     }
                 }
-                2 => self.term_move(1),
+                2 => {
+                    if self.term.conn == ConnState::Disconnected {
+                        if !self.term.ports.is_empty() {
+                            let n = self.term.ports.len();
+                            self.term.selected_port = (self.term.selected_port + 1) % n;
+                        }
+                    } else if !self.term.input_mode {
+                        self.term_move(1);
+                    }
+                }
                 3 => {
                     let n = self.topo.topology.devices.len();
                     if n > 0 && self.topo.selected + 1 < n {
@@ -393,6 +466,19 @@ impl App {
                 }
                 _ => {}
             },
+            KeyCode::Char('i') | KeyCode::Char('I') => {
+                if self.tab == 2 && self.term.conn == ConnState::Connected {
+                    self.term.input_mode = true;
+                }
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                if self.tab == 2 && self.term.conn == ConnState::Disconnected {
+                    let bauds = [9600u32, 115200, 19200, 38400, 57600];
+                    if let Some(p) = bauds.iter().position(|&b| b == self.term.baud) {
+                        self.term.baud = bauds[(p + 1) % bauds.len()];
+                    }
+                }
+            }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if self.tab == 3 {
                     self.topo_export_d2();
@@ -425,7 +511,17 @@ impl App {
                             self.execute_quick(action);
                         }
                     }
-                    2 => self.term_send(),
+                    2 => match self.term.conn {
+                        ConnState::Disconnected => self.scan_connect(),
+                        ConnState::Connected => {
+                            if self.term.input_mode {
+                                self.term_send_input();
+                            } else {
+                                self.term_send();
+                            }
+                        }
+                        ConnState::Scanning => {}
+                    },
                     3 => self.topo_gen_cli(),
                     4 => {
                         let sel = self.backup.selected;
@@ -439,6 +535,8 @@ impl App {
                     if let Some(f) = self.ip_form.fields.get_mut(self.ip_form.focus) {
                         f.pop();
                     }
+                } else if self.tab == 2 && self.term.input_mode {
+                    self.term.input.pop();
                 }
             }
             KeyCode::Char(c) => {
@@ -451,6 +549,8 @@ impl App {
                             }
                         }
                     }
+                } else if self.tab == 2 && self.term.input_mode {
+                    self.term.input.push(c);
                 }
             }
             _ => {}
@@ -629,7 +729,7 @@ impl App {
         self.term.cmd_idx = ((cur + delta + n as i64) % n as i64) as usize;
     }
 
-    /// 模块三：发送当前命令到第一个可用串口。
+    /// 模块三：发送当前命令到持久会话。
     fn term_send(&mut self) {
         let Some(v) = self.vendor_db.vendors().get(self.term.vendor_idx) else {
             return;
@@ -638,20 +738,147 @@ impl App {
             return;
         };
         let rendered = cmd.command.clone();
-        match self.term.ports.first() {
-            Some(p) => {
-                let name = p.name.clone();
-                let line = rendered.clone();
-                self.term.status = Some(match serial::SerialSession::open(&name, 9600) {
-                    Ok(mut s) => match s.write_line(&line) {
-                        Ok(_) => format!("已发送到 {name}: {line}"),
-                        Err(e) => format!("发送失败: {e}"),
-                    },
-                    Err(e) => format!("连接 {name} 失败: {e}"),
-                });
+        self.send_line(&rendered);
+    }
+
+    /// 模块三：发送手动输入行。
+    fn term_send_input(&mut self) {
+        let line = self.term.input.clone();
+        self.term.input.clear();
+        self.term.input_mode = false;
+        if !line.trim().is_empty() {
+            self.send_line(&line);
+        }
+    }
+
+    /// 模块三：向持久会话写一行。
+    fn send_line(&mut self, line: &str) {
+        let result = match &self.session {
+            Some(sess) => match sess.lock() {
+                Ok(mut port) => {
+                    let bytes = format!("{line}\r\n").into_bytes();
+                    port.write_all(&bytes).map_err(|e| e.to_string())
+                }
+                Err(_) => Err("会话锁失败".to_string()),
+            },
+            None => Err("未连接设备，请先按 Enter 扫描连接".to_string()),
+        };
+        match result {
+            Ok(_) => self.term.status = Some(format!("已发送: {line}")),
+            Err(e) => {
+                if self.session.is_some() {
+                    self.term.status = Some(format!("发送失败: {e}"));
+                    self.term.conn = ConnState::Disconnected;
+                    self.session = None;
+                } else {
+                    self.term.status = Some(e);
+                }
             }
-            None => {
-                self.term.status = Some(format!("未检测到串口，命令：{rendered}"));
+        }
+    }
+
+    /// 模块三：扫描串口并连接（后台执行，成功建立持久会话 + 读线程）。
+    fn scan_connect(&mut self) {
+        if self.term.conn != ConnState::Disconnected {
+            return;
+        }
+        self.term.conn = ConnState::Scanning;
+        self.term.status = Some("扫描串口 / 试探波特率…".into());
+        self.term.ports = serial::list_ports();
+        let baud = self.term.baud;
+        let tx = self.term_tx.clone();
+
+        self.rt.spawn_blocking(move || {
+            for p in serial::list_ports() {
+                match serial::SerialSession::open(&p.name, baud) {
+                    Ok(mut sess) => {
+                        if sess.write_line("\r").is_ok() {
+                            // 试探回显
+                            let mut buf = [0u8; 256];
+                            let mut collected = Vec::new();
+                            for _ in 0..6 {
+                                match sess.read_chunk(&mut buf) {
+                                    Ok(n) if n > 0 => {
+                                        collected.extend_from_slice(&buf[..n]);
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let looks = String::from_utf8_lossy(&collected).to_lowercase();
+                            if looks.contains('>')
+                                || looks.contains('#')
+                                || looks.contains("username")
+                                || looks.contains("login")
+                                || looks.contains("password")
+                                || looks.is_empty()
+                            {
+                                // 打开持久会话
+                                if let Ok(port) = serialport::new(&p.name, baud)
+                                    .timeout(Duration::from_millis(200))
+                                    .open()
+                                {
+                                    let arc = std::sync::Arc::new(std::sync::Mutex::new(port));
+                                    let _ = tx.send(TermEvent::Connected(arc.clone()));
+                                    // 后台读线程
+                                    let rx_tx = tx.clone();
+                                    std::thread::spawn(move || {
+                                        let mut buf = [0u8; 512];
+                                        loop {
+                                            let n = {
+                                                let mut port = match arc.lock() {
+                                                    Ok(p) => p,
+                                                    Err(_) => break,
+                                                };
+                                                match port.read(&mut buf) {
+                                                    Ok(n) if n > 0 => n,
+                                                    _ => 0,
+                                                }
+                                            };
+                                            if n == 0 {
+                                                std::thread::sleep(Duration::from_millis(50));
+                                                continue;
+                                            }
+                                            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                                            if rx_tx.send(TermEvent::Echo(text)).is_err() {
+                                                break;
+                                            }
+                                        }
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            let _ = tx.send(TermEvent::Failed("未找到可连接的串口设备".to_string()));
+        });
+    }
+
+    /// 拉取终端事件（回显 / 连接结果）。
+    fn drain_term(&mut self) {
+        while let Ok(ev) = self.term_rx.try_recv() {
+            match ev {
+                TermEvent::Echo(text) => {
+                    for line in text.lines() {
+                        self.term.output.push(line.to_string());
+                    }
+                    if self.term.output.len() > 500 {
+                        let excess = self.term.output.len() - 500;
+                        self.term.output.drain(..excess);
+                    }
+                }
+                TermEvent::Connected(sess) => {
+                    self.session = Some(sess);
+                    self.term.conn = ConnState::Connected;
+                    self.term.status = Some("已连接，回车 / I 输入命令，↑/↓ 选模板".into());
+                }
+                TermEvent::Failed(msg) => {
+                    self.term.conn = ConnState::Disconnected;
+                    self.term.status = Some(format!("✗ {msg}"));
+                }
             }
         }
     }
