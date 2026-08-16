@@ -255,6 +255,7 @@ pub struct App {
     pub adapters: Vec<Adapter>,
     pub active_adapter: Option<Adapter>,
     pub env_ready: bool,
+    pub ipv6_on: bool,
     pub tab: usize,
     pub diag: DiagState,
     pub quick_set: QuickSetState,
@@ -304,6 +305,7 @@ impl App {
             adapters: Vec::new(),
             active_adapter: None,
             env_ready: false,
+            ipv6_on: false,
             tab: 0,
             diag: DiagState::default(),
             quick_set: QuickSetState::default(),
@@ -337,6 +339,7 @@ impl App {
         self.is_admin = p.is_admin;
         self.adapters = p.adapters.clone();
         self.active_adapter = p.active_adapter().cloned();
+        self.ipv6_on = p.ipv6_enabled;
         self.env_ready = true;
     }
 
@@ -605,9 +608,11 @@ impl App {
                 }
             }
             QuickAction::ToggleIpv6 => {
-                let cur = net_set::ipv6_enabled();
-                let o = net_set::set_ipv6(!cur);
-                let target = if !cur { "启用" } else { "禁用" };
+                let o = net_set::set_ipv6(!self.ipv6_on);
+                if o.success {
+                    self.ipv6_on = !self.ipv6_on;
+                }
+                let target = if self.ipv6_on { "启用" } else { "禁用" };
                 (o.success, if o.success { format!("IPv6 已切换为{target}") } else { o.combined() })
             }
             QuickAction::StaticIp => {

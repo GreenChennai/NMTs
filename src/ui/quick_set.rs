@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, IP_FORM_FIELDS};
+use crate::app::{App, IP_FORM_FIELDS, QuickAction};
 use crate::ui::widgets::scroll_list;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
@@ -42,7 +42,13 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         .quick_set
         .items
         .iter()
-        .map(|item| format!("{} — {}", item.name, item.desc))
+        .map(|item| match item.action {
+            QuickAction::ToggleIpv6 => {
+                let state = if app.ipv6_on { "开" } else { "关" };
+                format!("{} — 当前：{state}（Enter 切换）", item.name)
+            }
+            _ => format!("{} — {}", item.name, item.desc),
+        })
         .collect();
     let selected = app.quick_set.selected;
     scroll_list(
@@ -79,6 +85,9 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
             format!(" 命令：{}", item.desc),
             Style::default().fg(Color::DarkGray),
         )));
+        if matches!(item.action, QuickAction::ToggleIpv6) {
+            lines.push(crate::ui::widgets::toggle_line(" IPv6", app.ipv6_on));
+        }
         lines.push(Line::from(""));
     }
 

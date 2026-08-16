@@ -59,7 +59,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/artifacts | Out-Null
           Copy-Item target/release/nmts.exe dist/artifacts/
           Copy-Item dist/NMTs-windows-portable.zip dist/artifacts/
-          Copy-Item NMTs-1.0.0-setup.exe dist/artifacts/
+          Copy-Item NMTs-setup.exe dist/artifacts/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -90,7 +90,7 @@ jobs:
           files: |
             dist/nmts.exe
             dist/NMTs-windows-portable.zip
-            dist/NMTs-1.0.0-setup.exe
+            dist/NMTs-setup.exe
           prerelease: true
           body_path: RELEASE_NOTES.md
         env:

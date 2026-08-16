@@ -1,5 +1,11 @@
 # NMTs 发布说明
 
+## v1.6.0（V2.0 增量六：组件规范收口）
+
+- **统一组件收口**：`ui/widgets.rs` 沉淀 `ScrollList` / `Toggle` / `StatusBadge`，header 管理员徽标统一为 `StatusBadge`，IPv6 开关以 `Toggle` 呈现当前状态（探测注册表 `DisabledComponents`）。
+- **IPv6 状态可见**：探测合并查询返回 IPv6 启用状态，快捷设置列表实时显示「开/关」。
+- **安装包**：`installer.nsi` 输出固定名 `NMTs-setup.exe`（版本号随 `Cargo.toml` 走），CI 打包 exe + 绿色版 zip + 安装包三件套。
+
 ## v1.5.0（V2.0 增量五：拓扑编辑器外置）
 
 - **外置拓扑编辑器**：`editor/topology_editor.html`（React Flow 画布）+ `editor/editor.py`（pywebview 独立窗口）。主 TUI 点「拓扑图」→ 按 `O` 导出 `topology.json` 并拉起独立编辑器窗口。

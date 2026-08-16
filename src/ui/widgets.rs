@@ -6,10 +6,32 @@
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use ratatui::Frame;
+
+/// 状态徽标（连接 / 管理员 / 上网网卡等），用于 header 与详情。
+pub fn status_badge(text: &str, color: Color) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(" {text} "),
+        Style::default().fg(Color::Black).bg(color),
+    ))
+}
+
+/// 开关组件：`on` 为当前状态，渲染 `[开]` / `[关]`（空格切换由调用方处理）。
+pub fn toggle_line(label: &str, on: bool) -> Line<'static> {
+    let (txt, color) = if on {
+        ("[开]", Color::Green)
+    } else {
+        ("[关]", Color::Red)
+    };
+    Line::from(vec![
+        Span::raw(format!(" {label} ")),
+        Span::styled(txt, Style::default().fg(Color::Black).bg(color)),
+    ])
+}
 
 /// 可滚动列表：`List` + 右侧 `Scrollbar`，自动保证选中项始终可见。
 ///

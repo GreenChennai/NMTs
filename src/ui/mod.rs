@@ -95,13 +95,14 @@ fn draw_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             }
         }
 
-        // 管理员标识
+        // 管理员标识（统一状态徽标）
         let admin = if app.is_admin {
-            Span::styled("  管理员 ✓", Style::default().fg(Color::Green))
+            crate::ui::widgets::status_badge("管理员", Color::Green)
         } else {
-            Span::styled("  非管理员", Style::default().fg(Color::Yellow))
+            crate::ui::widgets::status_badge("非管理员", Color::Yellow)
         };
-        spans.push(admin);
+        spans.push(Span::raw("  "));
+        spans.extend(admin.spans);
     }
 
     let p = Paragraph::new(Line::from(spans));

@@ -2,11 +2,11 @@
 ; 由 GitHub Actions 在 Windows runner 上构建后调用 makensis 生成安装包
 
 !define APP_NAME "NMTs"
-!define APP_VERSION "1.0.0"
+!define APP_VERSION "1.6.0"
 !define APP_PUBLISHER "GreenChennai"
 
 Name "${APP_NAME} ${APP_VERSION}"
-OutFile "NMTs-${APP_VERSION}-setup.exe"
+OutFile "NMTs-setup.exe"
 InstallDir "$PROGRAMFILES64\${APP_NAME}"
 InstallDirRegKey HKLM "Software\${APP_NAME}" "InstallDir"
 RequestExecutionLevel admin

@@ -27,6 +27,8 @@ pub struct NetProbe {
     pub winhttp_proxy: String,
     /// 探测域名解析是否成功（合并进 PS，省 nslookup 冷启动）。
     pub dns_ok: bool,
+    /// IPv6 是否启用（注册表 DisabledComponents == 0）。
+    pub ipv6_enabled: bool,
     /// 有异常状态的网络类 PnP 设备（驱动缺失/错误）。
     pub problem_devices: Vec<String>,
     /// Windows Defender 检测到的威胁数。
@@ -60,6 +62,7 @@ $wh=((netsh winhttp show proxy) | Out-String);
 $bad=@(Get-PnpDevice -Class Net -PresentOnly | Where-Object {$_.Status -eq 'Error' -or $_.Status -eq 'Unknown'} | Select-Object -ExpandProperty FriendlyName);
 $threat=@(Get-MpThreat | Select-Object -ExpandProperty ThreatName);
 $dnsok=[bool](Resolve-DnsName 'www.baidu.com' -DnsOnly -ErrorAction SilentlyContinue | Select-Object -First 1);
+$ipv6d=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters' -Name DisabledComponents -ErrorAction SilentlyContinue).DisabledComponents;
 [PSCustomObject]@{
   admin=[bool]$admin;
   adapters=@($adapters);
@@ -76,6 +79,7 @@ $dnsok=[bool](Resolve-DnsName 'www.baidu.com' -DnsOnly -ErrorAction SilentlyCont
   ie_proxy_server=[string]$p.ProxyServer;
   winhttp_proxy=$wh;
   dns_ok=[bool]$dnsok;
+  ipv6_enabled=([int]$ipv6d -eq 0);
   problem_devices=@($bad);
   threat_count=@($threat).Count;
 } | ConvertTo-Json -Compress -Depth 4
@@ -126,6 +130,7 @@ fn parse_probe(json: &str) -> Option<NetProbe> {
         ie_proxy_server: v.get("ie_proxy_server").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         winhttp_proxy: v.get("winhttp_proxy").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         dns_ok: v.get("dns_ok").and_then(|x| x.as_bool()).unwrap_or(false),
+        ipv6_enabled: v.get("ipv6_enabled").and_then(|x| x.as_bool()).unwrap_or(false),
         problem_devices,
         threat_count: v.get("threat_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
     })
