@@ -1,6 +1,6 @@
 [package]
 name = "nmts"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "NMTs — Network Maintenance Tool set（Windows 网络维护工具集）"
 authors = ["GreenChennai <luvse@foxmail.com>"]
@@ -23,6 +23,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+serialport = "4"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"

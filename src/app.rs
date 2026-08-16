@@ -13,6 +13,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::config::Config;
 use crate::core::net_diag::{CheckResult, DiagEvent, Diagnoser};
 use crate::core::net_set;
+use crate::core::{serial, vendor_cli::VendorDb};
 use crate::ui;
 use crate::windows::adapter::Adapter;
 use crate::windows::probe::{probe_network, NetProbe};
@@ -78,6 +79,15 @@ impl Default for QuickSetState {
     }
 }
 
+/// 模块三（网工终端）状态。
+#[derive(Debug, Default)]
+pub struct TermState {
+    pub vendor_idx: usize,
+    pub cmd_idx: usize,
+    pub ports: Vec<serial::PortInfo>,
+    pub status: Option<String>,
+}
+
 /// 模块一诊断界面状态。
 #[derive(Debug, Default)]
 pub struct DiagState {
@@ -110,6 +120,8 @@ pub struct App {
     pub tab: usize,
     pub diag: DiagState,
     pub quick_set: QuickSetState,
+    pub term: TermState,
+    pub vendor_db: VendorDb,
     pub show_help: bool,
     pub status_msg: Option<String>,
     running: bool,
@@ -145,6 +157,11 @@ impl App {
             tab: 0,
             diag: DiagState::default(),
             quick_set: QuickSetState::default(),
+            term: TermState {
+                ports: serial::list_ports(),
+                ..Default::default()
+            },
+            vendor_db: VendorDb::load(),
             show_help: false,
             status_msg: None,
             running: true,
@@ -201,18 +218,40 @@ impl App {
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('j') => {
                 self.tab = (self.tab + TABS.len() - 1) % TABS.len();
             }
-            KeyCode::Up => {
-                if self.tab == 1 && !self.quick_set.items.is_empty() {
-                    let n = self.quick_set.items.len();
-                    self.quick_set.selected = (self.quick_set.selected + n - 1) % n;
+            KeyCode::Char('[') => {
+                if self.tab == 2 && !self.vendor_db.vendors().is_empty() {
+                    let n = self.vendor_db.vendors().len();
+                    self.term.vendor_idx = (self.term.vendor_idx + n - 1) % n;
+                    self.term.cmd_idx = 0;
                 }
             }
-            KeyCode::Down => {
-                if self.tab == 1 && !self.quick_set.items.is_empty() {
-                    let n = self.quick_set.items.len();
-                    self.quick_set.selected = (self.quick_set.selected + 1) % n;
+            KeyCode::Char(']') => {
+                if self.tab == 2 && !self.vendor_db.vendors().is_empty() {
+                    let n = self.vendor_db.vendors().len();
+                    self.term.vendor_idx = (self.term.vendor_idx + 1) % n;
+                    self.term.cmd_idx = 0;
                 }
             }
+            KeyCode::Up => match self.tab {
+                1 => {
+                    if !self.quick_set.items.is_empty() {
+                        let n = self.quick_set.items.len();
+                        self.quick_set.selected = (self.quick_set.selected + n - 1) % n;
+                    }
+                }
+                2 => self.term_move(-1),
+                _ => {}
+            },
+            KeyCode::Down => match self.tab {
+                1 => {
+                    if !self.quick_set.items.is_empty() {
+                        let n = self.quick_set.items.len();
+                        self.quick_set.selected = (self.quick_set.selected + 1) % n;
+                    }
+                }
+                2 => self.term_move(1),
+                _ => {}
+            },
             KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
                 match self.tab {
                     0 => {
@@ -226,6 +265,7 @@ impl App {
                             self.execute_quick(action);
                         }
                     }
+                    2 => self.term_send(),
                     _ => {}
                 }
             }
@@ -301,6 +341,46 @@ impl App {
         };
 
         self.quick_set.result = Some(format!("{} {msg}", if ok { "✓" } else { "✗" }));
+    }
+
+    /// 模块三：导航命令模板。
+    fn term_move(&mut self, delta: i64) {
+        let Some(v) = self.vendor_db.vendors().get(self.term.vendor_idx) else {
+            return;
+        };
+        let n = v.commands.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self.term.cmd_idx as i64;
+        self.term.cmd_idx = ((cur + delta + n as i64) % n as i64) as usize;
+    }
+
+    /// 模块三：发送当前命令到第一个可用串口。
+    fn term_send(&mut self) {
+        let Some(v) = self.vendor_db.vendors().get(self.term.vendor_idx) else {
+            return;
+        };
+        let Some(cmd) = v.commands.get(self.term.cmd_idx) else {
+            return;
+        };
+        let rendered = cmd.command.clone();
+        match self.term.ports.first() {
+            Some(p) => {
+                let name = p.name.clone();
+                let line = rendered.clone();
+                self.term.status = Some(match serial::SerialSession::open(&name, 9600) {
+                    Ok(mut s) => match s.write_line(&line) {
+                        Ok(_) => format!("已发送到 {name}: {line}"),
+                        Err(e) => format!("发送失败: {e}"),
+                    },
+                    Err(e) => format!("连接 {name} 失败: {e}"),
+                });
+            }
+            None => {
+                self.term.status = Some(format!("未检测到串口，命令：{rendered}"));
+            }
+        }
     }
 
     /// 启动诊断（后台重新探测 + 异步执行，事件经 mpsc 回传）。

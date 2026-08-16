@@ -4,3 +4,5 @@
 
 pub mod net_diag;
 pub mod net_set;
+pub mod serial;
+pub mod vendor_cli;
