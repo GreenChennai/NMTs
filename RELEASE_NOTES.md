@@ -1,5 +1,13 @@
 # NMTs 发布说明
 
+## v3.0.2（拓扑编辑器架构重构：内置后端 + 实时同步）
+
+- 架构重构：拓扑编辑器由「外置 pywebview 窗口 + CDN React Flow」改为 **NMTs 内嵌 HTTP + WebSocket 服务**（后端）+ **自包含纯 JS SVG 编辑器**（前端，零 CDN / 零 pywebview / 零 Node 构建）。
+- 编辑器页面随二进制内嵌（`include_str!`），优先读取磁盘 `editor/topology_editor.html` 便于热改；彻底消除「需用户安装部署依赖」的问题，原 `[NMTs] 未安装 pywebview` 空色块问题消失。
+- 实时双向同步：前端每次编辑（增删设备 / 拖拽 / 改端口 IP / 连线）经 `/ws` 实时回传 NMTs 后端，TUI 内存拓扑即时更新并重跑设计预检；`保存` 落盘 `topology.json`，`关闭` 关闭后端服务。
+- 设备节点新增画布坐标 `x`/`y`（编辑器布局可持久化，后端逻辑忽略）。
+- 移除 `editor/editor.py`（不再需要）。
+
 ## v3.0.1（拓扑编辑器修复）
 
 - 修复：拓扑编辑器 `editor.py` 不再硬依赖 pywebview——未安装时自动回退系统默认浏览器打开编辑器；`topo_open_editor` 增加 python 缺失时的浏览器回退。

@@ -3,252 +3,379 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>NMTs 拓扑编辑器（V3.0）</title>
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/@xyflow/react@12/dist/umd/index.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/@xyflow/react@12/dist/style.css" />
+<title>NMTs 拓扑编辑器</title>
 <style>
-  :root { --bg:#1e1e2e; --panel:#2a2a3a; --accent:#238636; }
+  :root { --bg:#1e1e2e; --panel:#262635; --accent:#238636; --line:#3a3a4a; --text:#e6e6e6; --muted:#9da5b4; }
   * { box-sizing: border-box; }
-  body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:#e6e6e6; height:100vh; overflow:hidden; }
-  #app { display:flex; height:100vh; }
-  .sidebar { width:210px; background:var(--panel); padding:12px; overflow-y:auto; border-right:1px solid #3a3a4a; }
-  .sidebar h3 { font-size:13px; margin:8px 0; color:#9da5b4; }
-  .dev-btn { display:block; width:100%; margin:4px 0; padding:7px; background:#333; border:1px solid #444; border-radius:6px; color:#e6e6e6; cursor:pointer; text-align:left; font-size:12px; }
+  html, body { margin:0; height:100%; }
+  body { font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif; background:var(--bg); color:var(--text); overflow:hidden; }
+  #topbar { height:44px; display:flex; align-items:center; gap:10px; padding:0 12px; background:var(--panel); border-bottom:1px solid var(--line); }
+  #topbar .title { font-weight:700; color:#7ee787; }
+  #topbar .spacer { flex:1; }
+  #status { font-size:12px; color:var(--muted); }
+  #status.on { color:#7ee787; }
+  button.tb { padding:6px 12px; border:none; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; font-size:13px; }
+  button.tb.secondary { background:#444; }
+  button.tb.connect { background:#3b5bdb; }
+  button.tb.connect.active { background:#f0a500; color:#222; }
+  #main { display:flex; height:calc(100% - 44px); }
+  #sidebar { width:188px; background:var(--panel); padding:10px; overflow-y:auto; border-right:1px solid var(--line); }
+  #sidebar h3 { font-size:12px; color:var(--muted); margin:6px 0; }
+  .dev-btn { display:block; width:100%; margin:4px 0; padding:7px; background:#333; border:1px solid #444; border-radius:6px; color:var(--text); cursor:pointer; text-align:left; font-size:12px; }
   .dev-btn:hover { background:var(--accent); border-color:var(--accent); }
-  #canvas { flex:1; }
-  .props { width:280px; background:var(--panel); padding:12px; border-left:1px solid #3a3a4a; overflow-y:auto; }
-  .props label { display:block; font-size:12px; margin:8px 0 2px; color:#9da5b4; }
-  .props input, .props select, .props textarea { width:100%; padding:6px; background:#1e1e2e; border:1px solid #444; border-radius:4px; color:#e6e6e6; font-size:13px; }
-  .props textarea { min-height:60px; resize:vertical; }
-  .toolbar { position:absolute; top:8px; left:222px; z-index:10; display:flex; gap:6px; flex-wrap:wrap; }
-  .toolbar button { padding:6px 10px; background:var(--accent); border:none; border-radius:5px; color:#fff; cursor:pointer; font-size:12px; }
-  .toolbar button.secondary { background:#444; }
-  .node-card { padding:8px 10px; border-radius:8px; border:2px solid #555; background:#2b2b3a; min-width:110px; text-align:center; position:relative; }
-  .node-card .icon { font-size:20px; line-height:1; }
-  .node-card .role { font-size:10px; color:#9da5b4; }
-  .node-card .name { font-size:13px; font-weight:600; }
-  .edge-label { font-size:11px; fill:#9da5b4; }
-  .hint { position:absolute; bottom:8px; left:222px; z-index:10; font-size:11px; color:#9da5b4; background:rgba(0,0,0,.5); padding:4px 8px; border-radius:4px; }
+  #canvas-wrap { flex:1; position:relative; overflow:hidden; background:
+     linear-gradient(#2a2a38 1px, transparent 1px) 0 0/24px 24px,
+     linear-gradient(90deg, #2a2a38 1px, transparent 1px) 0 0/24px 24px,
+     var(--bg); }
+  svg { width:100%; height:100%; display:block; }
+  #props { width:300px; background:var(--panel); padding:12px; overflow-y:auto; border-left:1px solid var(--line); }
+  #props h3 { font-size:13px; margin:4px 0 8px; color:#7ee787; }
+  .field { margin-bottom:9px; }
+  .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:3px; }
+  .field input, .field select, .field textarea { width:100%; padding:6px; background:#1e1e2e; border:1px solid var(--line); border-radius:4px; color:var(--text); font-size:13px; }
+  .field textarea { resize:vertical; }
+  button.del { width:100%; margin-top:8px; padding:7px; background:#5a2230; border:1px solid #7a2a3a; border-radius:6px; color:#ffb4b4; cursor:pointer; }
+  button.del:hover { background:#7a2a3a; }
+  .hint { color:var(--muted); font-size:12px; line-height:1.6; }
+  .badge { font-size:11px; color:var(--muted); }
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="topbar">
+  <span class="title">NMTs 拓扑编辑器</span>
+  <span class="badge">（NMTs 后端实时同步）</span>
+  <span class="spacer"></span>
+  <span id="status">○ 未连接</span>
+  <button class="tb connect" id="btnConnect">连线模式</button>
+  <button class="tb secondary" id="btnLayout">自动布局</button>
+  <button class="tb" id="btnSave">保存</button>
+  <button class="tb secondary" id="btnClose">关闭</button>
+</div>
+<div id="main">
+  <div id="sidebar">
+    <h3>添加设备</h3>
+    <!-- 设备类型按钮由 JS 注入 -->
+  </div>
+  <div id="canvas-wrap">
+    <svg id="canvas"></svg>
+  </div>
+  <div id="props"></div>
+</div>
+
 <script>
-const { useState, useCallback, useEffect } = React;
-const { ReactFlow, Background, Controls, MiniMap, addEdge, useNodesState, useEdgesState, Handle, Position } = ReactFlow;
+"use strict";
+const SVGNS = "http://www.w3.org/2000/svg";
 
-// V3.0：10 种设备角色 + 图标
-const VENDORS = { huawei_vrp:'华为', h3c_vrp:'H3C', cisco_ios:'Cisco' };
-const ROLES = {
-  core:'核心', dist:'汇聚', access:'接入', router:'路由器', firewall:'防火墙',
-  server:'服务器', pc:'用户电脑', phone:'用户手机', ac:'AC 控制器', ap:'AP 接入点'
-};
-const ICONS = {
-  core:'🔷', dist:'🔶', access:'🟩', router:'🌐', firewall:'🛡️',
-  server:'🖥️', pc:'💻', phone:'📱', ac:'📡', ap:'📶'
-};
+const VENDORS = { huawei_vrp:"华为", h3c_vrp:"H3C", cisco_ios:"Cisco" };
+const ROLES = { core:"核心", dist:"汇聚", access:"接入", router:"路由器", firewall:"防火墙",
+  server:"服务器", pc:"用户电脑", phone:"用户手机", ac:"AC 控制器", ap:"AP 接入点" };
+const ICONS = { core:"🔷", dist:"🔶", access:"🟩", router:"🌐", firewall:"🛡️",
+  server:"🖥️", pc:"💻", phone:"📱", ac:"📡", ap:"📶" };
 
-function DeviceNode({ data, selected }) {
-  return React.createElement('div', {
-    className: 'node-card',
-    style: { borderColor: selected ? '#238636' : '#555' }
-  }, [
-    React.createElement(Handle, { key:'t', type:'target', position: Position.Left, style:{width:10,height:10} }),
-    React.createElement('div', { key:'i', className:'icon' }, ICONS[data.role] || '🔘'),
-    React.createElement('div', { key:'r', className:'role' }, (ROLES[data.role]||data.role)),
-    React.createElement('div', { key:'n', className:'name' }, data.name || data.id),
-    React.createElement('div', { key:'h', className:'role' }, data.config?.hostname || ''),
-    React.createElement(Handle, { key:'s', type:'source', position: Position.Right, style:{width:10,height:10} }),
-  ]);
+// 全局状态
+let state = { devices: [], links: [] };
+let selected = null;            // { kind:"device"|"link", id }
+let connectMode = false;
+let connectFrom = null;
+const svg = document.getElementById("canvas");
+
+/* ---------- 工具函数 ---------- */
+function el(tag, attrs) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
 }
-const nodeTypes = { device: DeviceNode };
+function devById(id) { return state.devices.find(d => d.id === id); }
+function setStatus(text, on) {
+  const s = document.getElementById("status");
+  s.textContent = text;
+  s.className = on ? "on" : "";
+}
+function svgPoint(e) {
+  const r = svg.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function vlansToText(vlans) {
+  return (vlans || []).map(v => v.id + ":" + (v.name || "")).join(", ");
+}
+function vlansFromText(txt) {
+  return txt.split(/[,，\s]+/).filter(Boolean).map(seg => {
+    const [id, name] = seg.split(":");
+    return { id: parseInt(id) || 0, name: name || "" };
+  }).filter(v => v.id > 0);
+}
 
-function App() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [sel, setSel] = useState(null); // { kind:'node'|'edge', id }
-  const [model, setModel] = useState({ devices:[], links:[] });
-
-  const onConnect = useCallback((c) =>
-    setEdges((eds) => addEdge({ ...c, label:'', data:{ from_port:'', to_port:'', from_ip:'', to_ip:'' } }, eds)),
-    [setEdges]);
-
-  const addDevice = (role) => {
-    const id = 'd' + Date.now();
-    const node = {
-      id, type:'device', position:{ x:80+Math.random()*300, y:80+Math.random()*300 },
-      data: { id, name:'新设备', vendor:'huawei_vrp', role,
-        config:{ hostname:'', vlans:[], trunk_vlans:[], access_vlan:null, l3_intfs:[], routing:'None', stp_enabled:true, dhcp_server:false } }
-    };
-    setNodes((nds) => nds.concat(node));
-    setSel({ kind:'node', id });
+/* ---------- WebSocket 实时同步 ---------- */
+let ws = null;
+function connectWs() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  ws = new WebSocket(proto + location.host + "/ws");
+  ws.onopen = () => setStatus("● 已连接 · 实时同步中", true);
+  ws.onclose = () => setStatus("○ 已断开", false);
+  ws.onmessage = (e) => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === "init") applyTopo(m.topo);
+    } catch (_) {}
   };
-
-  const updateNode = (id, patch) =>
-    setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n));
-
-  const updateEdge = (id, patch) =>
-    setEdges((eds) => eds.map((e) => e.id === id
-      ? { ...e, data: { ...(e.data||{}), ...patch }, label: edgeLabel({ ...(e.data||{}), ...patch }) } : e));
-
-  const edgeLabel = (d) => {
-    const parts = [];
-    if (d.from_port || d.to_port) parts.push((d.from_port||'?') + '↔' + (d.to_port||'?'));
-    if (d.from_ip) parts.push(d.from_ip + (d.to_ip ? '/' + d.to_ip : ''));
-    return parts.join('  ');
+}
+let updateTimer = null;
+function scheduleUpdate() {
+  clearTimeout(updateTimer);
+  updateTimer = setTimeout(() => {
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: "update", topo: serialize() }));
+    }
+  }, 250);
+}
+function serialize() {
+  return {
+    devices: state.devices.map(d => ({
+      id: d.id, name: d.name, vendor: d.vendor, role: d.role,
+      mgmt_ip: d.mgmt_ip || "", x: d.x, y: d.y, config: d.config
+    })),
+    links: state.links.map(l => ({
+      id: l.id, from: l.from, to: l.to,
+      from_port: l.from_port || "", to_port: l.to_port || "",
+      from_ip: l.from_ip || "", to_ip: l.to_ip || ""
+    }))
   };
+}
 
-  const selectedNode = nodes.find((n) => n.id === (sel?.kind==='node' ? sel.id : null));
-  const selectedEdge = edges.find((e) => e.id === (sel?.kind==='edge' ? sel.id : null));
+/* ---------- 应用后端拓扑快照 ---------- */
+function applyTopo(topo) {
+  state.devices = (topo.devices || []).map(d => ({
+    ...d, config: d.config || { hostname: "", vlans: [], routing: "None", stp_enabled: false }
+  }));
+  state.links = (topo.links || []).map((l, i) => ({ ...l, id: l.id || ("L" + i) }));
+  // 没有坐标的设备给个默认网格布局
+  state.devices.forEach((d, i) => {
+    if (d.x == null || d.y == null) { d.x = 80 + (i % 4) * 190; d.y = 80 + Math.floor(i / 4) * 150; }
+  });
+  selected = null; connectFrom = null; connectMode = false; updateConnectBtn();
+  render(); renderProps();
+}
 
-  // 一键布局
-  const layout = (mode) => {
-    setNodes((nds) => {
-      const n = nds.length;
-      return nds.map((nd, i) => {
-        let x, y;
-        if (mode === 'horizontal') { x = 60 + i*200; y = 120; }
-        else if (mode === 'vertical') { x = 120; y = 60 + i*140; }
-        else if (mode === 'grid') { const c = Math.ceil(Math.sqrt(n)); x = 60 + (i%c)*200; y = 60 + Math.floor(i/c)*140; }
-        else { x = 60 + i*180; y = 60 + (i%2)*120; }
-        return { ...nd, position:{ x, y } };
-      });
+/* ---------- 渲染画布 ---------- */
+function render() {
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // 链路
+  state.links.forEach(l => {
+    const a = devById(l.from), b = devById(l.to);
+    if (!a || !b) return;
+    const ax = a.x + 55, ay = a.y + 30, bx = b.x + 55, by = b.y + 30;
+    const isSel = selected && selected.kind === "link" && selected.id === l.id;
+    const line = el("line", {
+      x1: ax, y1: ay, x2: bx, y2: by,
+      stroke: isSel ? "#238636" : "#6a8a5a",
+      "stroke-width": isSel ? 3 : 2
     });
-  };
-
-  // VLAN 列表文本 <-> 数组
-  const vlansToText = (vlans) => (vlans||[]).map((v)=>v.id+':'+(v.name||'')).join(', ');
-  const vlansFromText = (txt) => txt.split(/[,，\s]+/).filter(Boolean).map((seg)=>{
-    const [id, name] = seg.split(':');
-    return { id: parseInt(id)||0, name: name||'' };
-  }).filter((v)=>v.id>0);
-
-  const buildModel = () => {
-    const devices = nodes.map((n) => ({
-      id: n.id, name: n.data.name || n.id, vendor: n.data.vendor || 'huawei_vrp',
-      role: n.data.role || 'access', mgmt_ip: n.data.mgmt_ip || '', creds: null,
-      config: n.data.config || { hostname:'' }
-    }));
-    const links = edges.map((e) => ({
-      from: e.source, to: e.target,
-      from_port: e.data?.from_port || '', to_port: e.data?.to_port || '',
-      from_ip: e.data?.from_ip || '', to_ip: e.data?.to_ip || ''
-    }));
-    return { devices, links };
-  };
-
-  const save = async () => {
-    const m = buildModel();
-    const json = JSON.stringify(m, null, 2);
-    if (window.pywebview && window.pywebview.api) {
-      await window.pywebview.api.save(json);
-      alert('已保存 topology.json');
-    } else {
-      const blob = new Blob([json], { type:'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob); a.download = 'topology.json'; a.click();
+    line.style.cursor = "pointer";
+    line.addEventListener("pointerdown", (e) => { e.stopPropagation(); selectLink(l.id); });
+    svg.appendChild(line);
+    let txt = "";
+    if (l.from_port || l.to_port) txt += (l.from_port || "?") + "↔" + (l.to_port || "?");
+    if (l.from_ip) txt += "  " + l.from_ip + (l.to_ip ? ("/" + l.to_ip) : "");
+    if (txt) {
+      const t = el("text", { x: (ax + bx) / 2, y: (ay + by) / 2 - 5, fill: "#9da5b4", "font-size": 11, "text-anchor": "middle" });
+      t.textContent = txt;
+      svg.appendChild(t);
     }
-  };
+  });
 
-  const load = async () => {
-    let json = null;
-    if (window.pywebview && window.pywebview.api) {
-      json = await window.pywebview.api.load();
-    } else {
-      const input = document.createElement('input'); input.type='file'; input.accept='.json';
-      input.onchange = () => { const f=input.files[0]; const r=new FileReader(); r.onload=()=>applyModel(JSON.parse(r.result)); r.readAsText(f); };
-      input.click(); return;
-    }
-    if (json) applyModel(JSON.parse(json));
-  };
-
-  const applyModel = (m) => {
-    const ns = (m.devices||[]).map((d) => ({
-      id:d.id, type:'device', position:{ x:80+Math.random()*300, y:80+Math.random()*300 },
-      data:{ id:d.id, name:d.name, vendor:d.vendor, role:d.role, mgmt_ip:d.mgmt_ip, config:d.config }
-    }));
-    const es = (m.links||[]).map((l, i) => ({
-      id:'e'+i, source:l.from, target:l.to,
-      data:{ from_port:l.from_port||'', to_port:l.to_port||'', from_ip:l.from_ip||'', to_ip:l.to_ip||'' },
-      label: edgeLabel({ from_port:l.from_port||'', to_port:l.to_port||'', from_ip:l.from_ip||'', to_ip:l.to_ip||'' })
-    }));
-    setNodes(ns); setEdges(es);
-  };
-
-  useEffect(() => { load(); }, []);
-
-  return React.createElement('div', { id:'app' },
-    React.createElement('div', { className:'sidebar',
-      onMouseDown:(e)=>e.stopPropagation() },
-      React.createElement('h3', null, '设备类型'),
-      Object.keys(ROLES).map((r) =>
-        React.createElement('button', { key:r, className:'dev-btn', onClick:()=>addDevice(r) },
-          (ICONS[r]||'🔘') + ' ' + (ROLES[r]||r) ))
-    ),
-    React.createElement('div', { className:'toolbar' },
-      React.createElement('button', { onClick: save }, '保存'),
-      React.createElement('button', { className:'secondary', onClick: load }, '打开'),
-      React.createElement('button', { className:'secondary', onClick:()=>layout('horizontal') }, '水平布局'),
-      React.createElement('button', { className:'secondary', onClick:()=>layout('vertical') }, '垂直布局'),
-      React.createElement('button', { className:'secondary', onClick:()=>layout('grid') }, '网格布局'),
-      React.createElement('button', { className:'secondary', onClick:()=>layout('stagger') }, '间隔布局')
-    ),
-    React.createElement('div', { id:'canvas' },
-      React.createElement(ReactFlow, {
-        nodes, edges, onNodesChange, onEdgesChange, onConnect, nodeTypes,
-        onNodeClick:(_, n)=>setSel({ kind:'node', id:n.id }),
-        onEdgeClick:(_, e)=>setSel({ kind:'edge', id:e.id }),
-        onPaneClick:()=>setSel(null),
-        snapToGrid:true, snapGrid:[20,20], fitView:true
-      },
-        React.createElement(Background, { gap:20 }),
-        React.createElement(Controls, null),
-        React.createElement(MiniMap, null)
-      )
-    ),
-    React.createElement('div', { className:'hint' }, '拖拽吸附 20px 网格 · Shift 拖拽临时对齐 · 点击边编辑端口/IP'),
-    React.createElement('div', { className:'props' },
-      selectedNode ? React.createElement('div', null,
-        React.createElement('h3', null, '设备属性'),
-        React.createElement('label', null, '名称'),
-        React.createElement('input', { value: selectedNode.data.name||'', onChange:(e)=>updateNode(selectedNode.id,{ name:e.target.value }) }),
-        React.createElement('label', null, '主机名 hostname'),
-        React.createElement('input', { value: selectedNode.data.config?.hostname||'', onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, hostname:e.target.value } }) }),
-        React.createElement('label', null, '厂商'),
-        React.createElement('select', { value: selectedNode.data.vendor||'huawei_vrp', onChange:(e)=>updateNode(selectedNode.id,{ vendor:e.target.value }) },
-          Object.entries(VENDORS).map(([k,v])=>React.createElement('option',{ key:k, value:k }, v))),
-        React.createElement('label', null, '角色'),
-        React.createElement('select', { value: selectedNode.data.role||'access', onChange:(e)=>updateNode(selectedNode.id,{ role:e.target.value }) },
-          Object.entries(ROLES).map(([k,v])=>React.createElement('option',{ key:k, value:k }, v))),
-        React.createElement('label', null, '管理 IP'),
-        React.createElement('input', { value: selectedNode.data.mgmt_ip||'', onChange:(e)=>updateNode(selectedNode.id,{ mgmt_ip:e.target.value }) }),
-        React.createElement('label', null, 'VLAN（格式 id:名称, 逗号分隔）'),
-        React.createElement('textarea', { value: vlansToText(selectedNode.data.config?.vlans),
-          onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, vlans:vlansFromText(e.target.value) } }) }),
-        React.createElement('label', null, '路由协议'),
-        React.createElement('select', { value: selectedNode.data.config?.routing||'None', onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, routing:e.target.value } }) },
-          ['None','Static','Ospf'].map((r)=>React.createElement('option',{ key:r, value:r }, r))),
-        React.createElement('label', null, 'STP'),
-        React.createElement('select', { value: selectedNode.data.config?.stp_enabled?'true':'false', onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, stp_enabled:e.target.value==='true' } }) },
-          [['true','开启'],['false','关闭']].map(([k,v])=>React.createElement('option',{ key:k, value:k }, v)))
-      ) : selectedEdge ? React.createElement('div', null,
-        React.createElement('h3', null, '链路 / 端口'),
-        React.createElement('label', null, '源端口 from_port'),
-        React.createElement('input', { value: selectedEdge.data?.from_port||'', onChange:(e)=>updateEdge(selectedEdge.id,{ from_port:e.target.value }) }),
-        React.createElement('label', null, '目标端口 to_port'),
-        React.createElement('input', { value: selectedEdge.data?.to_port||'', onChange:(e)=>updateEdge(selectedEdge.id,{ to_port:e.target.value }) }),
-        React.createElement('label', null, '源接口 IP/掩码'),
-        React.createElement('input', { value: selectedEdge.data?.from_ip||'', placeholder:'192.168.1.1/24', onChange:(e)=>updateEdge(selectedEdge.id,{ from_ip:e.target.value }) }),
-        React.createElement('label', null, '目标接口 IP/掩码'),
-        React.createElement('input', { value: selectedEdge.data?.to_ip||'', placeholder:'192.168.1.2/24', onChange:(e)=>updateEdge(selectedEdge.id,{ to_ip:e.target.value }) })
-      ) : React.createElement('p', { style:{color:'#9da5b4',fontSize:'12px'} }, '点击节点编辑设备属性\n点击连线编辑端口/IP/掩码\n（VLAN/路由改动保存后由 NMTs 预检校验）')
-    )
-  );
+  // 设备节点
+  state.devices.forEach(d => {
+    const g = el("g", {});
+    g.setAttribute("transform", `translate(${d.x},${d.y})`);
+    g.style.cursor = "move";
+    const isSel = selected && selected.kind === "device" && selected.id === d.id;
+    const rect = el("rect", {
+      width: 110, height: 60, rx: 8, ry: 8,
+      fill: "#2b2b3a", stroke: isSel ? "#238636" : "#555", "stroke-width": isSel ? 3 : 1.5
+    });
+    g.appendChild(rect);
+    const ic = el("text", { x: 12, y: 28, "font-size": 20 });
+    ic.textContent = ICONS[d.role] || "🔘";
+    g.appendChild(ic);
+    const nm = el("text", { x: 36, y: 26, fill: "#e6e6e6", "font-size": 13, "font-weight": "bold" });
+    nm.textContent = d.name || d.id;
+    g.appendChild(nm);
+    const rl = el("text", { x: 36, y: 44, fill: "#9da5b4", "font-size": 11 });
+    rl.textContent = ROLES[d.role] || d.role;
+    g.appendChild(rl);
+    g.addEventListener("pointerdown", (e) => startDrag(e, d));
+    svg.appendChild(g);
+  });
 }
 
-ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(App));
+/* ---------- 拖拽 / 选择 ---------- */
+function startDrag(e, dev) {
+  e.stopPropagation();
+  e.preventDefault();
+  if (connectMode) { handleConnectClick(dev); return; }
+  selectDevice(dev.id);
+  const pt = svgPoint(e);
+  const offX = pt.x - dev.x, offY = pt.y - dev.y;
+  function move(ev) {
+    const p = svgPoint(ev);
+    dev.x = Math.max(0, p.x - offX);
+    dev.y = Math.max(0, p.y - offY);
+    render();
+  }
+  function up() {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    scheduleUpdate();
+  }
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+function selectDevice(id) { selected = { kind: "device", id }; render(); renderProps(); }
+function selectLink(id) { selected = { kind: "link", id }; render(); renderProps(); }
+
+svg.addEventListener("pointerdown", () => {
+  if (connectMode) return;
+  selected = null; render(); renderProps();
+});
+
+/* ---------- 连线模式 ---------- */
+function handleConnectClick(dev) {
+  if (!connectFrom) { connectFrom = dev.id; setStatus("连线中：再点选目标设备（Esc 取消）", true); return; }
+  if (connectFrom === dev.id) { connectFrom = null; setStatus("● 已连接 · 实时同步中", true); return; }
+  const id = "L" + Date.now() + Math.floor(Math.random() * 1000);
+  state.links.push({ id, from: connectFrom, to: dev.id, from_port: "", to_port: "", from_ip: "", to_ip: "" });
+  connectFrom = null; connectMode = false; updateConnectBtn();
+  selected = { kind: "link", id };
+  render(); renderProps(); scheduleUpdate();
+}
+function toggleConnect() {
+  connectMode = !connectMode; connectFrom = null; updateConnectBtn();
+  setStatus(connectMode ? "连线模式：依次点两设备建链路" : "● 已连接 · 实时同步中", true);
+}
+function updateConnectBtn() {
+  const b = document.getElementById("btnConnect");
+  b.className = connectMode ? "tb connect active" : "tb connect";
+  b.textContent = connectMode ? "连线中…" : "连线模式";
+}
+document.getElementById("btnConnect").onclick = toggleConnect;
+
+/* ---------- 增删 / 布局 ---------- */
+function addDevice(role) {
+  const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
+  const n = state.devices.length;
+  const dev = {
+    id, name: "新设备", vendor: "huawei_vrp", role,
+    mgmt_ip: "", x: 80 + (n % 4) * 190, y: 80 + Math.floor(n / 4) * 150,
+    config: { hostname: "", vlans: [], routing: "None", stp_enabled: false }
+  };
+  state.devices.push(dev);
+  selected = { kind: "device", id };
+  render(); renderProps(); scheduleUpdate();
+}
+function deleteSelected() {
+  if (!selected) return;
+  if (selected.kind === "device") {
+    state.devices = state.devices.filter(d => d.id !== selected.id);
+    state.links = state.links.filter(l => l.from !== selected.id && l.to !== selected.id);
+  } else {
+    state.links = state.links.filter(l => l.id !== selected.id);
+  }
+  selected = null; render(); renderProps(); scheduleUpdate();
+}
+function autoLayout() {
+  const n = state.devices.length;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+  state.devices.forEach((d, i) => { d.x = 80 + (i % cols) * 190; d.y = 80 + Math.floor(i / cols) * 150; });
+  render(); scheduleUpdate();
+}
+
+/* ---------- 属性面板 ---------- */
+function labeledInput(label, val, onch, placeholder) {
+  const w = document.createElement("div"); w.className = "field";
+  const l = document.createElement("label"); l.textContent = label; w.appendChild(l);
+  const i = document.createElement("input"); i.value = val || ""; if (placeholder) i.placeholder = placeholder;
+  i.addEventListener("input", () => onch(i.value));
+  w.appendChild(i); return w;
+}
+function labeledSelect(label, opts, cur, onch) {
+  const w = document.createElement("div"); w.className = "field";
+  const l = document.createElement("label"); l.textContent = label; w.appendChild(l);
+  const s = document.createElement("select");
+  for (const k in opts) {
+    const o = document.createElement("option"); o.value = k; o.textContent = opts[k];
+    if (String(k) === String(cur)) o.selected = true;
+    s.appendChild(o);
+  }
+  s.addEventListener("change", () => onch(s.value));
+  w.appendChild(s); return w;
+}
+function labeledTextarea(label, val, onch) {
+  const w = document.createElement("div"); w.className = "field";
+  const l = document.createElement("label"); l.textContent = label; w.appendChild(l);
+  const t = document.createElement("textarea"); t.value = val || ""; t.rows = 2;
+  t.addEventListener("input", () => onch(t.value));
+  w.appendChild(t); return w;
+}
+function renderProps() {
+  const p = document.getElementById("props");
+  p.innerHTML = "";
+  if (selected && selected.kind === "device") {
+    const d = devById(selected.id); if (!d) return;
+    p.appendChild(h3("设备属性"));
+    p.appendChild(labeledInput("名称", d.name, v => { d.name = v; render(); scheduleUpdate(); }));
+    p.appendChild(labeledInput("主机名 hostname", d.config.hostname, v => { d.config.hostname = v; scheduleUpdate(); }));
+    p.appendChild(labeledSelect("厂商", VENDORS, d.vendor, v => { d.vendor = v; scheduleUpdate(); }));
+    p.appendChild(labeledSelect("角色", ROLES, d.role, v => { d.role = v; render(); scheduleUpdate(); }));
+    p.appendChild(labeledInput("管理 IP", d.mgmt_ip, v => { d.mgmt_ip = v; scheduleUpdate(); }));
+    p.appendChild(labeledSelect("路由协议", { None: "None", Static: "Static", Ospf: "Ospf" }, d.config.routing || "None", v => { d.config.routing = v; scheduleUpdate(); }));
+    p.appendChild(labeledSelect("STP", { true: "开启", false: "关闭" }, String(d.config.stp_enabled == null ? false : d.config.stp_enabled), v => { d.config.stp_enabled = (v === "true"); scheduleUpdate(); }));
+    p.appendChild(labeledTextarea("VLAN（id:名称，逗号分隔）", vlansToText(d.config.vlans), v => { d.config.vlans = vlansFromText(v); scheduleUpdate(); }));
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "删除该设备"; del.onclick = deleteSelected; p.appendChild(del);
+  } else if (selected && selected.kind === "link") {
+    const l = state.links.find(x => x.id === selected.id); if (!l) return;
+    p.appendChild(h3("链路 / 端口"));
+    p.appendChild(labeledInput("源端口 from_port", l.from_port, v => { l.from_port = v; render(); scheduleUpdate(); }));
+    p.appendChild(labeledInput("目标端口 to_port", l.to_port, v => { l.to_port = v; render(); scheduleUpdate(); }));
+    p.appendChild(labeledInput("源接口 IP/掩码", l.from_ip, v => { l.from_ip = v; render(); scheduleUpdate(); }, "192.168.1.1/24"));
+    p.appendChild(labeledInput("目标接口 IP/掩码", l.to_ip, v => { l.to_ip = v; render(); scheduleUpdate(); }, "192.168.1.2/24"));
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "删除该链路"; del.onclick = deleteSelected; p.appendChild(del);
+  } else {
+    const h = document.createElement("p"); h.className = "hint";
+    h.innerHTML = "点击节点编辑设备属性；<br>点「连线模式」后依次点两设备建链路；<br>点连线编辑端口 / IP。<br><br>所有改动实时同步回 NMTs（预检同步更新）。";
+    p.appendChild(h);
+  }
+}
+function h3(t) { const e = document.createElement("h3"); e.textContent = t; return e; }
+
+/* ---------- 顶栏按钮 ---------- */
+document.getElementById("btnLayout").onclick = autoLayout;
+document.getElementById("btnSave").onclick = () => {
+  if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "save" })); setStatus("● 已保存（落盘 topology.json）", true); }
+};
+document.getElementById("btnClose").onclick = () => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "close" }));
+  try { window.close(); } catch (_) {}
+  setStatus("已请求关闭编辑器", false);
+};
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && connectMode) { connectMode = false; connectFrom = null; updateConnectBtn(); setStatus("● 已连接 · 实时同步中", true); }
+  if ((e.key === "Delete" || e.key === "Backspace") && selected && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA" && document.activeElement.tagName !== "SELECT") {
+    deleteSelected();
+  }
+});
+
+/* ---------- 初始化侧栏设备按钮 ---------- */
+const sidebar = document.getElementById("sidebar");
+for (const role in ROLES) {
+  const b = document.createElement("button");
+  b.className = "dev-btn";
+  b.textContent = (ICONS[role] || "🔘") + " " + ROLES[role];
+  b.onclick = () => addDevice(role);
+  sidebar.appendChild(b);
+}
+
+connectWs();
 </script>
 </body>
 </html>

@@ -23,7 +23,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_hint(f: &mut Frame, app: &App, area: Rect) {
     let hint = match app.topo.mode {
         TopoMode::List => " N 新建 · I 导入 · ↑/↓ 选拓扑 · Enter 打开操作菜单",
-        TopoMode::Menu => " ↑/↓ 选操作 · Enter 执行（打开编辑器直接弹网页编辑器） · Esc 返回",
+        TopoMode::Menu => " ↑/↓ 选操作 · Enter 执行（打开编辑器启动内置服务并弹网页编辑器） · Esc 返回",
         TopoMode::Detail => " ↑/↓ 选设备 · Enter 生成 CLI · D 下发到串口 · B 回读 · Esc 返回",
     };
     f.render_widget(

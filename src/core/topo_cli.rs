@@ -177,6 +177,7 @@ mod tests {
                 trunk_vlans: vec![10],
                 ..Default::default()
             },
+            ..Default::default()
         });
         t.devices.push(Device {
             id: "acc1".into(),
@@ -190,6 +191,7 @@ mod tests {
                 access_vlan: Some(10),
                 ..Default::default()
             },
+            ..Default::default()
         });
         t.links.push(Link {
             from: "core".into(),

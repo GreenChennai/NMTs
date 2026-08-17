@@ -2,7 +2,7 @@
 ; 由 GitHub Actions 在 Windows runner 上构建后调用 makensis 生成安装包
 
 !define APP_NAME "NMTs"
-!define APP_VERSION "3.0.1"
+!define APP_VERSION "3.0.2"
 !define APP_PUBLISHER "GreenChennai"
 
 Name "${APP_NAME} ${APP_VERSION}"
@@ -34,6 +34,9 @@ Section "安装"
   File "vendor_db\cisco_ios.yaml"
   File "vendor_db\dns_providers.yaml"
 
+  SetOutPath "$INSTDIR\editor"
+  File "editor\topology_editor.html"
+
   WriteRegStr HKLM "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
@@ -48,8 +51,10 @@ Section "Uninstall"
   Delete "$INSTDIR\RELEASE_NOTES.md"
   Delete "$INSTDIR\config\default.yaml"
   Delete "$INSTDIR\vendor_db\*.yaml"
+  Delete "$INSTDIR\editor\topology_editor.html"
   RMDir "$INSTDIR\config"
   RMDir "$INSTDIR\vendor_db"
+  RMDir "$INSTDIR\editor"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"

@@ -177,6 +177,28 @@ pub struct Device {
     pub creds: Option<Credentials>,
     #[serde(default)]
     pub config: DeviceConfig,
+    /// 编辑器画布坐标（V3.0.2 新增，仅前端布局用，后端逻辑忽略）。
+    #[serde(default)]
+    pub x: Option<f64>,
+    /// 编辑器画布坐标 Y。
+    #[serde(default)]
+    pub y: Option<f64>,
+}
+
+impl Default for Device {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            vendor: Vendor::HuaweiVrp,
+            role: DeviceRole::Unknown,
+            mgmt_ip: String::new(),
+            creds: None,
+            config: DeviceConfig::default(),
+            x: None,
+            y: None,
+        }
+    }
 }
 
 /// 链路。
@@ -314,6 +336,8 @@ pub fn demo_topology() -> Topology {
             mtu: Some(1500),
             ..Default::default()
         },
+        x: None,
+        y: None,
     };
     let dist = Device {
         id: "dist".into(),
@@ -334,6 +358,8 @@ pub fn demo_topology() -> Topology {
             mtu: Some(1500),
             ..Default::default()
         },
+        x: None,
+        y: None,
     };
     let acc1 = Device {
         id: "acc1".into(),
@@ -348,6 +374,8 @@ pub fn demo_topology() -> Topology {
             stp_enabled: true,
             ..Default::default()
         },
+        x: None,
+        y: None,
     };
     let acc2 = Device {
         id: "acc2".into(),
@@ -362,6 +390,8 @@ pub fn demo_topology() -> Topology {
             stp_enabled: false,
             ..Default::default()
         },
+        x: None,
+        y: None,
     };
     let router = Device {
         id: "r1".into(),
@@ -384,6 +414,8 @@ pub fn demo_topology() -> Topology {
             routing: RoutingProtocol::Static,
             ..Default::default()
         },
+        x: None,
+        y: None,
     };
 
     Topology {
@@ -449,6 +481,7 @@ mod tests {
                         trunk_vlans: vec![10],
                         ..Default::default()
                     },
+                    ..Default::default()
                 },
                 Device {
                     id: "acc1".into(),
@@ -462,6 +495,7 @@ mod tests {
                         access_vlan: Some(10),
                         ..Default::default()
                     },
+                    ..Default::default()
                 },
             ],
             links: vec![Link {

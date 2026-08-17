@@ -4,12 +4,15 @@
 //! UI 立即渲染，探测结果经 mpsc 回传后刷新状态栏，避免启动阻塞 3~4 秒。
 
 use std::io::{Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
 use crate::config::Config;
 use crate::core::net_diag::{CheckResult, DiagEvent, Diagnoser};
@@ -175,6 +178,16 @@ pub enum TermEvent {
         model: Option<String>,
     },
     Failed(String),
+}
+
+/// 内置拓扑编辑器后端消息（WebSocket 前端 → TUI）。
+pub enum EditorMsg {
+    /// 前端实时推送的拓扑快照（每次编辑）。
+    Update(crate::core::topology::Topology),
+    /// 前端请求落盘保存。
+    Save,
+    /// 前端请求关闭编辑器服务。
+    Close,
 }
 
 /// 模块三（网工终端）状态。
@@ -415,6 +428,15 @@ pub struct App {
     term_rx: UnboundedReceiver<TermEvent>,
     /// 持久串口会话（后台读线程 + 主线程写共享）。
     session: Option<std::sync::Arc<std::sync::Mutex<Box<dyn serialport::SerialPort>>>>,
+    /// 内置拓扑编辑器（V3.0.2）：后端 WebSocket 服务与 TUI 的桥接。
+    editor_tx: UnboundedSender<EditorMsg>,
+    editor_rx: UnboundedReceiver<EditorMsg>,
+    /// 编辑器服务监听端口（None=未启动）。
+    editor_port: Option<u16>,
+    /// 关闭信号（原子标志，供服务任务轮询）。
+    editor_shutdown: Option<Arc<AtomicBool>>,
+    /// 服务任务句柄（用于退出时 abort）。
+    editor_handle: Option<JoinHandle<()>>,
     rt: Handle,
 }
 
@@ -428,6 +450,7 @@ impl App {
         let (probe_tx, probe_rx) = tokio::sync::mpsc::unbounded_channel();
         let (dns_tx, dns_rx) = tokio::sync::mpsc::unbounded_channel();
         let (term_tx, term_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (editor_tx, editor_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // 后台探测（不阻塞 UI）
         let probe_tx_clone = probe_tx.clone();
@@ -469,6 +492,11 @@ impl App {
             term_tx,
             term_rx,
             session: None,
+            editor_tx,
+            editor_rx,
+            editor_port: None,
+            editor_shutdown: None,
+            editor_handle: None,
             rt,
         }
     }
@@ -495,6 +523,7 @@ impl App {
             self.drain_probe();
             self.drain_dns();
             self.drain_term();
+            self.drain_editor();
             terminal.draw(|f| ui::draw(f, self))?;
 
             if event::poll(Duration::from_millis(50))? {
@@ -507,6 +536,7 @@ impl App {
         }
 
         ime::enable_ime();
+        self.stop_editor();
         ratatui::restore();
         Ok(())
     }
@@ -1589,42 +1619,84 @@ impl App {
         }
     }
 
-    /// 模块四：打开外部拓扑编辑器（导出 topology.json + 启动 pywebview 窗口）。
+    /// 模块四：打开内置拓扑编辑器（NMTs 作后端，浏览器动态页面实时同步，零依赖）。
     fn topo_open_editor(&mut self) {
         let Some(e) = self.topo.current() else {
             return;
         };
-        let root = crate::config::app_root();
-        let json_path = root.join("topology.json");
-        let json = serde_json::to_string_pretty(&e.topology).unwrap_or_default();
-        if std::fs::write(&json_path, &json).is_err() {
-            self.topo.status = Some("写入 topology.json 失败".into());
+        let initial = e.topology.clone();
+
+        // 已在运行：直接再开一个浏览器标签指向既有服务。
+        if let Some(port) = self.editor_port {
+            Self::open_browser(port);
+            self.topo.status = Some("编辑器已在运行，已为你打开页面".into());
             return;
         }
-        let editor_py = root.join("editor").join("editor.py");
-        let html = root.join("editor").join("topology_editor.html");
 
-        // 优先 python + pywebview 窗口；无 python 则回退系统默认浏览器打开 HTML
-        let spawned = std::process::Command::new("python")
-            .arg(editor_py.to_str().unwrap_or("editor.py"))
-            .arg(json_path.to_str().unwrap_or("topology.json"))
+        match crate::web::start_editor(initial, self.editor_tx.clone(), self.rt.clone()) {
+            Ok(srv) => {
+                self.editor_port = Some(srv.port);
+                self.editor_shutdown = Some(srv.shutdown);
+                self.editor_handle = Some(srv.handle);
+                Self::open_browser(srv.port);
+                self.topo.status = Some(format!(
+                    "已启动内置拓扑编辑器 → http://127.0.0.1:{}/ （编辑实时同步回 NMTs）",
+                    srv.port
+                ));
+            }
+            Err(err) => {
+                self.topo.status = Some(format!("编辑器启动失败：{err}"));
+            }
+        }
+    }
+
+    /// 用系统默认浏览器打开编辑器页面（Windows）。
+    fn open_browser(port: u16) {
+        let url = format!("http://127.0.0.1:{port}/");
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
             .spawn();
-        match spawned {
-            Ok(_) => {
-                self.topo.status = Some(
-                    "已启动拓扑编辑器（有 pywebview 走窗口，否则自动用浏览器）".into(),
-                );
+    }
+
+    /// 拉取编辑器后端消息（实时拓扑同步 / 保存 / 关闭）。
+    fn drain_editor(&mut self) {
+        while let Ok(msg) = self.editor_rx.try_recv() {
+            match msg {
+                EditorMsg::Update(t) => {
+                    let findings = self.check_topo(&t);
+                    if let Some(e) = self.topo.current_mut() {
+                        e.topology = t.clone();
+                        e.findings = findings;
+                    }
+                    self.topo.status = Some("编辑器已实时同步到 NMTs（预检已更新）".into());
+                }
+                EditorMsg::Save => {
+                    if let Some(e) = self.topo.current() {
+                        let json = serde_json::to_string_pretty(&e.topology).unwrap_or_default();
+                        let path = crate::config::app_root().join("topology.json");
+                        if std::fs::write(&path, &json).is_ok() {
+                            self.topo.status = Some(format!("已保存拓扑到 {}", path.display()));
+                        } else {
+                            self.topo.status = Some("保存失败：无法写入 topology.json".into());
+                        }
+                    }
+                }
+                EditorMsg::Close => self.stop_editor(),
             }
-            Err(_) => {
-                let html_s = html.to_str().unwrap_or("topology_editor.html").to_string();
-                let opened = std::process::Command::new("cmd")
-                    .args(["/c", "start", "", &html_s])
-                    .spawn();
-                self.topo.status = Some(match opened {
-                    Ok(_) => "已用默认浏览器打开拓扑编辑器".into(),
-                    Err(_) => "无法启动编辑器（缺 python 且浏览器打开失败）".into(),
-                });
-            }
+        }
+    }
+
+    /// 停止内置编辑器服务（收到前端 close 或退出程序时调用）。
+    fn stop_editor(&mut self) {
+        if let Some(sd) = self.editor_shutdown.take() {
+            sd.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        if let Some(h) = self.editor_handle.take() {
+            h.abort();
+        }
+        if self.editor_port.is_some() {
+            self.editor_port = None;
+            self.topo.status = Some("已关闭拓扑编辑器".into());
         }
     }
 

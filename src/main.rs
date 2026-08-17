@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod core;
 mod ui;
+mod web;
 mod windows;
 
 use std::path::PathBuf;
