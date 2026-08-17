@@ -103,6 +103,44 @@ pub fn add_dns_v6(iface: &str, dns: &str) -> CmdOutput {
     netsh::add_dns_v6(iface, dns)
 }
 
+/// 设置静态 IPv6 地址（地址含 /前缀）。
+pub fn set_address_v6(iface: &str, addr_with_prefix: &str) -> CmdOutput {
+    netsh::set_address_v6(iface, addr_with_prefix)
+}
+
+/// 设置 IPv6 默认网关（::/0 下一跳）。
+pub fn set_gateway_v6(iface: &str, gw: &str) -> CmdOutput {
+    netsh::set_gateway_v6(iface, gw)
+}
+
+/// IPv4 前缀长度转点分十进制子网掩码（如 24 → 255.255.255.0）。
+pub fn prefix_to_mask(prefix: u32) -> String {
+    if prefix == 0 || prefix > 32 {
+        return String::new();
+    }
+    let mask: u32 = if prefix >= 32 {
+        u32::MAX
+    } else {
+        u32::MAX << (32 - prefix)
+    };
+    format!(
+        "{}.{}.{}.{}",
+        (mask >> 24) & 0xff,
+        (mask >> 16) & 0xff,
+        (mask >> 8) & 0xff,
+        mask & 0xff
+    )
+}
+
+/// IPv6 前缀长度转展示字符串（如 64 → "64"）。
+pub fn prefix_to_v6_mask(prefix: u32) -> String {
+    if prefix == 0 {
+        String::new()
+    } else {
+        prefix.to_string()
+    }
+}
+
 /// DNS 切回 DHCP。
 pub fn set_dns_dhcp(iface: &str) -> CmdOutput {
     netsh::set_dns_dhcp(iface)
@@ -137,6 +175,10 @@ pub fn set_ipv6(enabled: bool) -> CmdOutput {
 }
 
 /// 查询 IPv6 是否启用（注册表 DisabledComponents）。
+///
+/// 注意：`DisabledComponents` 取值 0x20（优先 IPv4）等并**不**禁用 IPv6，
+/// 仅当低 8 位全为 1（0xFF，全局禁用）才算关闭。改用网卡绑定判定更准确，
+/// 见 `probe::NetProbe::ipv6_enabled`。
 pub fn ipv6_enabled() -> bool {
     let script =
         "$d=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters' \
@@ -148,7 +190,8 @@ pub fn ipv6_enabled() -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else {
         return true;
     };
-    v.get("v").and_then(|x| x.as_i64()).unwrap_or(0) == 0
+    // 仅 0xFF（完全禁用）才算关闭；其余取值（含 0x20 等）均为启用。
+    (v.get("v").and_then(|x| x.as_i64()).unwrap_or(0) & 0xFF) != 0xFF
 }
 
 /// TCP 全局优化。

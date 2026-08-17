@@ -35,6 +35,25 @@ pub fn set_dns_v6(iface: &str, dns: &str) -> CmdOutput {
     ])
 }
 
+/// 设置静态 IPv6 地址（地址含 /前缀，例如 `2001:db8::1/64`）。
+pub fn set_address_v6(iface: &str, addr_with_prefix: &str) -> CmdOutput {
+    run_netsh(&[
+        "interface",
+        "ipv6",
+        "set",
+        "address",
+        iface,
+        "static",
+        addr_with_prefix,
+    ])
+}
+
+/// 设置 IPv6 默认网关（::/0 下一跳）。先删后加，避免重复路由。
+pub fn set_gateway_v6(iface: &str, gw: &str) -> CmdOutput {
+    let _ = run_netsh(&["interface", "ipv6", "delete", "route", "::/0", iface]);
+    run_netsh(&["interface", "ipv6", "add", "route", "::/0", iface, gw])
+}
+
 /// 追加备用 IPv6 DNS。
 pub fn add_dns_v6(iface: &str, dns: &str) -> CmdOutput {
     run_netsh(&[

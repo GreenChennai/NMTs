@@ -12,7 +12,7 @@ pub mod widgets;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::widgets::{Block, Borders, Paragraph, Tabs, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, TABS};
@@ -215,11 +215,13 @@ fn draw_help(f: &mut Frame, area: ratatui::layout::Rect) {
         Line::from("  修改网络配置需管理员权限；修改类操作先自动备份可回退。"),
         Line::from("  非输入态已禁用输入法，单字母热键不被组字窗拦截（F2 切换）。"),
     ];
-    let p = Paragraph::new(lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(" 帮助（F1 / H） "),
-    );
+    let p = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(" 帮助（F1 / H） "),
+        )
+        .wrap(Wrap { trim: true });
     f.render_widget(p, area);
 }

@@ -1,5 +1,11 @@
 # NMTs 发布说明
 
+## v3.0.4（快捷设置双栈全字段 + IPv6 检测修正 + UI 边缘处理）
+
+- **快捷设置重构**：IPv4 与 IPv6 均常驻显示「网关 / 掩码 / IP 地址 / 主 DNS / 备 DNS」五项。DHCP 或 IPv6 自动获取时字段**灰显只读**（标注「自动获取」），切到「静态 IP / 静态」后变为**可编辑**，Enter 编辑、再 Enter 应用并保存（含 IPv6 静态地址 + 网关 + DNS）。新增「切换当前网卡」行（在 `adapters` 中循环切换并重新探测）。
+- **修复 IPv6 误判**：原判定依赖注册表 `DisabledComponents == 0`，而常见值 `0x20`（优先 IPv4）等**并不禁用 IPv6**，却被判为「未启用」。改为以网卡绑定 `Get-NetAdapterBinding -ComponentID ms_tcpip6` 的 `Enabled` 为准（并保留注册表完全禁用 0xFF 的兜底），与 test-ipv6 实测一致。
+- **UI 边缘检测 + 自动换行**：快捷设置面板新增**自动纵向滚动**（焦点行始终可见，内容不再被裁切）；速设头部提示、DNS 排名提示、帮助面板等补 `.wrap(Wrap{trim:true})`，超长文本自动换行不再顶出 UI。
+
 ## v3.0.3（日志修复 + 编辑器启动 panic 修复）
 
 - 修复：日志文件名无后缀问题——原 `rolling::daily(..., "nmts")` 生成 `nmts.YYYY-MM-DD`（无 `.log`，系统无法识别），改为 `nmts.log.YYYY-MM-DD`（标准滚动文件名，系统可识别为日志）。

@@ -52,9 +52,11 @@ pub const IP_FIELD_LABELS: [&str; 5] = ["网关", "子网掩码", "IP 地址", "
 /// 模块二焦点行。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QsRow {
+    AdapterSwitch,
     Ipv4Toggle,
     Ipv4Field(usize),
     Ipv6Toggle,
+    Ipv6Mode,
     Ipv6Field(usize),
     AdvancedToggle,
     AdvancedItem(usize),
@@ -72,6 +74,8 @@ pub struct QuickSetState {
     pub ipv4_fields: [String; 5],
     /// IPv6 表单字段。
     pub ipv6_fields: [String; 5],
+    /// IPv6 配置是否静态（false=自动获取 SLAAC/DHCPv6，只读）。
+    pub ipv6_static: bool,
     /// 高级设置是否展开。
     pub advanced_open: bool,
     /// 高级设置选中项。
@@ -82,12 +86,19 @@ pub struct QuickSetState {
     pub field_idx: usize,
     /// 编辑的是否为 IPv6 字段（否则 IPv4）。
     pub editing_v6: bool,
+    /// 面板纵向滚动偏移（内容超出可视区时）。
+    pub scroll: u16,
+    /// 当前选中的网卡在 `adapters` 中的索引（切换网卡用）。
+    pub adapter_idx: usize,
 }
 
 impl QuickSetState {
     /// 动态可聚焦行列表。
+    ///
+    /// 注意：DHCP / IPv6 自动获取 下的字段为只读展示，不加入可聚焦列表，
+    /// 避免焦点落到不可编辑的行；只有可编辑（静态）时才聚焦。
     fn focus_rows(&self, ipv6_on: bool) -> Vec<QsRow> {
-        let mut rows = vec![QsRow::Ipv4Toggle];
+        let mut rows = vec![QsRow::AdapterSwitch, QsRow::Ipv4Toggle];
         if self.ipv4_static {
             for i in 0..5 {
                 rows.push(QsRow::Ipv4Field(i));
@@ -95,8 +106,11 @@ impl QuickSetState {
         }
         rows.push(QsRow::Ipv6Toggle);
         if ipv6_on {
-            for i in 0..5 {
-                rows.push(QsRow::Ipv6Field(i));
+            rows.push(QsRow::Ipv6Mode);
+            if self.ipv6_static {
+                for i in 0..5 {
+                    rows.push(QsRow::Ipv6Field(i));
+                }
             }
         }
         rows.push(QsRow::AdvancedToggle);
@@ -134,11 +148,14 @@ impl Default for QuickSetState {
             ipv4_static: false,
             ipv4_fields: Default::default(),
             ipv6_fields: Default::default(),
+            ipv6_static: false,
             advanced_open: false,
             advanced_selected: 0,
             editing: false,
             field_idx: 0,
             editing_v6: false,
+            scroll: 0,
+            adapter_idx: 0,
         }
     }
 }
@@ -501,7 +518,7 @@ impl App {
         }
     }
 
-    /// 应用探测结果（刷新状态栏）。
+    /// 应用探测结果（刷新状态栏 + 填充快捷设置面板字段）。
     fn apply_probe(&mut self, p: NetProbe) {
         self.is_admin = p.is_admin;
         self.adapters = p.adapters.clone();
@@ -510,6 +527,42 @@ impl App {
         self.current_dns = p.dns.clone();
         self.current_mac = p.mac.clone();
         self.env_ready = true;
+
+        // 选中网卡索引（用于切换网卡）。
+        if let Some(pos) = self
+            .adapters
+            .iter()
+            .position(|a| a.interface_index == p.active_index)
+        {
+            self.quick_set.adapter_idx = pos;
+        }
+
+        // 编辑态中不覆盖用户正在填的字段。
+        if self.quick_set.editing {
+            return;
+        }
+
+        // IPv4：DHCP 显示只读、静态可编辑；填充网关/掩码/IP/DNS。
+        let v4_mask = crate::core::net_set::prefix_to_mask(p.prefix_len);
+        self.quick_set.ipv4_fields = [
+            p.gateway.clone(),
+            v4_mask,
+            p.ip.clone(),
+            p.dns.get(0).cloned().unwrap_or_default(),
+            p.dns.get(1).cloned().unwrap_or_default(),
+        ];
+        self.quick_set.ipv4_static = !p.dhcp_enabled;
+
+        // IPv6：填充网关/掩码(前缀)/地址/DNS；静态与否按地址来源判定。
+        let v6_mask = crate::core::net_set::prefix_to_v6_mask(p.ipv6_prefix);
+        self.quick_set.ipv6_fields = [
+            p.ipv6_gateway.clone(),
+            v6_mask,
+            p.ipv6_addr.clone(),
+            p.ipv6_dns.get(0).cloned().unwrap_or_default(),
+            p.ipv6_dns.get(1).cloned().unwrap_or_default(),
+        ];
+        self.quick_set.ipv6_static = p.ipv6_static;
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -982,9 +1035,11 @@ impl App {
         }
         let on = self.ipv6_on;
         match self.quick_set.current_row(on) {
+            QsRow::AdapterSwitch => self.cycle_adapter(),
             QsRow::Ipv4Toggle => self.toggle_ipv4_dhcp(),
             QsRow::Ipv4Field(i) => self.begin_edit(false, i),
             QsRow::Ipv6Toggle => self.toggle_ipv6(),
+            QsRow::Ipv6Mode => self.toggle_ipv6_mode(),
             QsRow::Ipv6Field(i) => self.begin_edit(true, i),
             QsRow::AdvancedToggle => {
                 self.quick_set.advanced_open = !self.quick_set.advanced_open;
@@ -998,11 +1053,57 @@ impl App {
         }
     }
 
-    /// 进入字段编辑态。
+    /// 进入字段编辑态（DHCP / IPv6 自动获取 字段只读，不可编辑）。
     fn begin_edit(&mut self, v6: bool, idx: usize) {
+        if v6 {
+            if !self.quick_set.ipv6_static {
+                self.quick_set.result =
+                    Some("（IPv6 当前为自动获取，切到「静态」后方可编辑）".into());
+                return;
+            }
+        } else if !self.quick_set.ipv4_static {
+            self.quick_set.result = Some("（IPv4 当前为 DHCP 自动获取，切到「静态 IP」后方可编辑）".into());
+            return;
+        }
         self.quick_set.editing = true;
         self.quick_set.editing_v6 = v6;
         self.quick_set.field_idx = idx;
+    }
+
+    /// 切换当前上网网卡（在 `adapters` 中循环，跳过空列表）。
+    fn cycle_adapter(&mut self) {
+        if self.adapters.is_empty() {
+            self.quick_set.result = Some("（未检测到网卡）".into());
+            return;
+        }
+        let n = self.adapters.len();
+        let next = (self.quick_set.adapter_idx + 1) % n;
+        self.quick_set.adapter_idx = next;
+        let idx = self.adapters[next].interface_index;
+        // 探测指定网卡（会短暂阻塞 ~1.5s，属用户主动操作）。
+        if let Some(p) = crate::windows::probe::probe_network_for(idx) {
+            self.apply_probe(p);
+            let kind = self
+                .active_adapter
+                .as_ref()
+                .map(|a| a.kind_label())
+                .unwrap_or("");
+            self.quick_set.result =
+                Some(format!("已切换网卡：{}（{}）", self.adapters[next].name, kind));
+        } else {
+            self.quick_set.result = Some("✗ 切换网卡探测失败".into());
+        }
+    }
+
+    /// IPv6 配置：静态 / 自动 切换（仅影响可编辑性，不改系统）。
+    fn toggle_ipv6_mode(&mut self) {
+        self.quick_set.ipv6_static = !self.quick_set.ipv6_static;
+        self.quick_set.result = Some(if self.quick_set.ipv6_static {
+            "IPv6 已切到「静态」：填字段后 Enter 应用（地址/网关/DNS）"
+        } else {
+            "IPv6 已切回「自动获取」（只读）"
+        }
+        .into());
     }
 
     /// 编辑态：输入一个字符。
@@ -1080,24 +1181,49 @@ impl App {
             return;
         }
         if self.quick_set.editing_v6 {
-            // IPv6 表单：目前仅支持写 v6 DNS（静态 v6 地址需 slaac/前缀，暂简化为 DNS 落地）
+            // IPv6 表单：支持静态地址 / 网关 / DNS（自动获取态不可进入编辑）。
+            let gw = self.quick_set.ipv6_fields[0].clone();
+            let prefix = self.quick_set.ipv6_fields[1].clone();
+            let addr = self.quick_set.ipv6_fields[2].clone();
             let dns1 = self.quick_set.ipv6_fields[3].clone();
             let dns2 = self.quick_set.ipv6_fields[4].clone();
-            if dns1.is_empty() {
-                self.quick_set.result = Some("✗ 请至少填写 IPv6 主 DNS".into());
+            if addr.is_empty() && dns1.is_empty() {
+                self.quick_set.result = Some("✗ 请至少填写 IPv6 地址或主 DNS".into());
                 return;
             }
             let _ = net_set::backup_network(&crate::config::app_root());
-            let _ = net_set::set_dns_v6(&iface, &dns1);
-            if !dns2.is_empty() {
-                let _ = net_set::add_dns_v6(&iface, &dns2);
+            let mut msgs: Vec<String> = Vec::new();
+            if !addr.is_empty() {
+                let ap = if prefix.is_empty() {
+                    addr.clone()
+                } else {
+                    format!("{addr}/{prefix}")
+                };
+                let o = net_set::set_address_v6(&iface, &ap);
+                if !o.success {
+                    self.quick_set.result =
+                        Some(format!("✗ 设置 IPv6 地址失败：{}", o.combined()));
+                    return;
+                }
+                if !gw.is_empty() {
+                    let _ = net_set::set_gateway_v6(&iface, &gw);
+                }
+                msgs.push(format!("地址 {ap}"));
             }
-            let suffix = if dns2.is_empty() {
-                String::new()
-            } else {
-                format!(" / {dns2}")
-            };
-            self.quick_set.result = Some(format!("✓ 已设置 IPv6 DNS {dns1}{suffix}"));
+            if !dns1.is_empty() {
+                let _ = net_set::set_dns_v6(&iface, &dns1);
+                if !dns2.is_empty() {
+                    let _ = net_set::add_dns_v6(&iface, &dns2);
+                }
+                let suffix = if dns2.is_empty() {
+                    String::new()
+                } else {
+                    format!(" / {dns2}")
+                };
+                msgs.push(format!("DNS {dns1}{suffix}"));
+            }
+            self.quick_set.result =
+                Some(format!("✓ 已设置 IPv6 {}", msgs.join("，")));
             self.quick_set.editing = false;
         } else {
             let gw = self.quick_set.ipv4_fields[0].clone();
