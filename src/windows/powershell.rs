@@ -12,7 +12,12 @@ pub fn run_ps(script: &str) -> CmdOutput {
     let preamble = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;";
     run_utf8(
         "powershell",
-        &["-NoProfile", "-NonInteractive", "-Command", &format!("{preamble} {script}")],
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("{preamble} {script}"),
+        ],
         DEFAULT_TIMEOUT,
     )
 }

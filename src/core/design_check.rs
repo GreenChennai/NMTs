@@ -82,7 +82,9 @@ pub fn check(t: &Topology, intents: &[Intent]) -> Vec<Finding> {
             Intent::UniqueSubnet => check_unique_subnet(t, &mut findings),
             Intent::MgmtVlanSeparate => check_mgmt_vlan(t, &mut findings),
             Intent::RedundantUplink { role } => check_redundant_uplink(t, *role, &mut findings),
-            Intent::VlanPropagated { vlan, to } => check_vlan_propagated(t, *vlan, *to, &mut findings),
+            Intent::VlanPropagated { vlan, to } => {
+                check_vlan_propagated(t, *vlan, *to, &mut findings)
+            }
             Intent::RoutingConsistent => check_routing(t, &mut findings),
             Intent::NoLoop => check_loop(t, &mut findings),
             Intent::MtuMatch => check_mtu(t, &mut findings),
@@ -131,7 +133,10 @@ fn check_mgmt_vlan(t: &Topology, out: &mut Vec<Finding>) {
                 intent: "管理/业务 VLAN 分离".into(),
                 severity: Severity::Info,
                 devices: vec![d.id.clone()],
-                message: format!("{} 同时配置了业务 access VLAN 与三层接口，注意管理流量与业务流量分离", d.name),
+                message: format!(
+                    "{} 同时配置了业务 access VLAN 与三层接口，注意管理流量与业务流量分离",
+                    d.name
+                ),
                 suggestion: "建议管理 VLAN 独立规划".into(),
             });
         }
@@ -151,7 +156,11 @@ fn check_redundant_uplink(t: &Topology, role: DeviceRole, out: &mut Vec<Finding>
                 intent: "冗余上联".into(),
                 severity: Severity::Warn,
                 devices: vec![d.id.clone()],
-                message: format!("{}（{}）仅 {uplink_count} 条上联，存在单点故障风险", d.name, role.label()),
+                message: format!(
+                    "{}（{}）仅 {uplink_count} 条上联，存在单点故障风险",
+                    d.name,
+                    role.label()
+                ),
                 suggestion: "增加第二条上联链路".into(),
             });
         }
@@ -177,8 +186,11 @@ fn check_vlan_propagated(t: &Topology, vlan: u16, to: DeviceRole, out: &mut Vec<
                 intent: format!("VLAN {vlan} 传播"),
                 severity: Severity::Error,
                 devices: vec![d.id.clone()],
-                message: format!("{} 需要 VLAN {vlan}，但上联设备 trunk 未放行该 VLAN", d.name),
-                suggestion: format!("在上联 trunk 接口放行 VLAN {vlan}"), 
+                message: format!(
+                    "{} 需要 VLAN {vlan}，但上联设备 trunk 未放行该 VLAN",
+                    d.name
+                ),
+                suggestion: format!("在上联 trunk 接口放行 VLAN {vlan}"),
             });
         }
     }
@@ -199,7 +211,12 @@ fn check_routing(t: &Topology, out: &mut Vec<Finding>) {
         out.push(Finding {
             intent: "路由协议一致".into(),
             severity: Severity::Warn,
-            devices: t.devices.iter().filter(|d| !d.config.l3_intfs.is_empty()).map(|d| d.id.clone()).collect(),
+            devices: t
+                .devices
+                .iter()
+                .filter(|d| !d.config.l3_intfs.is_empty())
+                .map(|d| d.id.clone())
+                .collect(),
             message: "三层设备路由协议不一致，可能导致路由不通".into(),
             suggestion: "统一同域路由协议（静态 / OSPF）".into(),
         });
@@ -212,7 +229,13 @@ fn check_loop(t: &Topology, out: &mut Vec<Finding>) {
         let no_stp: Vec<String> = t
             .devices
             .iter()
-            .filter(|d| !d.config.stp_enabled && matches!(d.role, DeviceRole::Core | DeviceRole::Dist | DeviceRole::Access))
+            .filter(|d| {
+                !d.config.stp_enabled
+                    && matches!(
+                        d.role,
+                        DeviceRole::Core | DeviceRole::Dist | DeviceRole::Access
+                    )
+            })
             .map(|d| d.id.clone())
             .collect();
         if !no_stp.is_empty() {
@@ -237,7 +260,10 @@ fn check_mtu(t: &Topology, out: &mut Vec<Finding>) {
                     intent: "MTU 一致".into(),
                     severity: Severity::Warn,
                     devices: vec![l.from.clone(), l.to.clone()],
-                    message: format!("链路 {}↔{} MTU 不一致（{a} vs {b}），大包可能分片/丢包", l.from, l.to),
+                    message: format!(
+                        "链路 {}↔{} MTU 不一致（{a} vs {b}），大包可能分片/丢包",
+                        l.from, l.to
+                    ),
                     suggestion: "统一链路两端 MTU".into(),
                 });
             }
@@ -249,7 +275,12 @@ fn check_spof(t: &Topology, out: &mut Vec<Finding>) {
     // 单点：某设备只有一条链路，且不是叶子接入设备
     for d in &t.devices {
         let deg = t.neighbors(&d.id).len();
-        if deg <= 1 && matches!(d.role, DeviceRole::Core | DeviceRole::Dist | DeviceRole::Router) {
+        if deg <= 1
+            && matches!(
+                d.role,
+                DeviceRole::Core | DeviceRole::Dist | DeviceRole::Router
+            )
+        {
             out.push(Finding {
                 intent: "无单点故障".into(),
                 severity: Severity::Warn,
@@ -308,7 +339,11 @@ mod tests {
                 hostname: "CORE".into(),
                 trunk_vlans: vec![10],
                 stp_enabled: true,
-                l3_intfs: vec![L3Intf { name: "Vlanif10".into(), subnet: "192.168.10.0/24".into(), vrrp: false }],
+                l3_intfs: vec![L3Intf {
+                    name: "Vlanif10".into(),
+                    subnet: "192.168.10.0/24".into(),
+                    vrrp: false,
+                }],
                 ..Default::default()
             },
         });
@@ -323,11 +358,22 @@ mod tests {
                 hostname: "ACC1".into(),
                 access_vlan: Some(10),
                 stp_enabled: true,
-                l3_intfs: vec![L3Intf { name: "Vlanif10".into(), subnet: "192.168.10.0/24".into(), vrrp: false }],
+                l3_intfs: vec![L3Intf {
+                    name: "Vlanif10".into(),
+                    subnet: "192.168.10.0/24".into(),
+                    vrrp: false,
+                }],
                 ..Default::default()
             },
         });
-        t.links.push(Link { from: "core".into(), to: "acc1".into(), from_port: String::new(), to_port: String::new() });
+        t.links.push(Link {
+            from: "core".into(),
+            to: "acc1".into(),
+            from_port: String::new(),
+            to_port: String::new(),
+            from_ip: String::new(),
+            to_ip: String::new(),
+        });
         t
     }
 
@@ -335,21 +381,36 @@ mod tests {
     fn subnet_overlap_detected() {
         let t = topo();
         let f = check(&t, &[Intent::UniqueSubnet]);
-        assert!(f.iter().any(|x| x.severity == Severity::Error && x.message.contains("重叠")));
+        assert!(f
+            .iter()
+            .any(|x| x.severity == Severity::Error && x.message.contains("重叠")));
     }
 
     #[test]
     fn vlan_propagated_ok_when_trunk_allows() {
         let t = topo();
-        let f = check(&t, &[Intent::VlanPropagated { vlan: 10, to: DeviceRole::Access }]);
+        let f = check(
+            &t,
+            &[Intent::VlanPropagated {
+                vlan: 10,
+                to: DeviceRole::Access,
+            }],
+        );
         assert!(!f.iter().any(|x| x.severity == Severity::Error));
     }
 
     #[test]
     fn redundant_uplink_warns_single() {
         let t = topo();
-        let f = check(&t, &[Intent::RedundantUplink { role: DeviceRole::Access }]);
-        assert!(f.iter().any(|x| x.severity == Severity::Warn && x.message.contains("1 条上联")));
+        let f = check(
+            &t,
+            &[Intent::RedundantUplink {
+                role: DeviceRole::Access,
+            }],
+        );
+        assert!(f
+            .iter()
+            .any(|x| x.severity == Severity::Warn && x.message.contains("1 条上联")));
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 pub mod backup;
 pub mod diagnose;
+pub mod ime;
+pub mod nav;
 pub mod quick_set;
 pub mod term_tool;
 pub mod topology;
@@ -74,7 +76,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 fn draw_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let mut spans: Vec<Span> = vec![Span::styled(
         " NMTs · 网络维护工具集 ",
-        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     )];
 
     // 当前上网网卡标识
@@ -84,10 +89,20 @@ fn draw_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     } else {
         match &app.active_adapter {
             Some(a) => {
-                let color = if a.is_virtual() { Color::Yellow } else { Color::Green };
+                let color = if a.is_virtual() {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                };
                 spans.push(Span::raw("  当前上网网卡: "));
-                spans.push(Span::styled(a.name.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)));
-                spans.push(Span::styled(format!(" [{}]", a.kind_label()), Style::default().fg(color)));
+                spans.push(Span::styled(
+                    a.name.clone(),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    format!(" [{}]", a.kind_label()),
+                    Style::default().fg(color),
+                ));
             }
             None => {
                 spans.push(Span::raw("  当前上网网卡: "));
@@ -110,14 +125,15 @@ fn draw_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 }
 
 fn draw_tabs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let titles: Vec<Line> = TABS
-        .iter()
-        .map(|t| Line::from(format!(" {t} ")))
-        .collect();
+    let titles: Vec<Line> = TABS.iter().map(|t| Line::from(format!(" {t} "))).collect();
     let tabs = Tabs::new(titles)
         .select(app.tab)
         .block(Block::default().borders(Borders::BOTTOM))
-        .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .divider(Span::raw("│"));
     f.render_widget(tabs, area);
 }
@@ -129,14 +145,15 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         summary.clone()
     } else {
         format!(
-            "Tab {}/{} — Enter/R 运行诊断 · ←/→ 切换模块 · H 帮助 · Q 退出",
+            "Tab {}/{} — Tab / Ctrl+← / Ctrl+→ 切换模块 · H 帮助 · Q 退出",
             app.tab + 1,
             TABS.len()
         )
     };
-    let p = Paragraph::new(Line::from(vec![
-        Span::styled(left, Style::default().fg(Color::DarkGray)),
-    ]))
+    let p = Paragraph::new(Line::from(vec![Span::styled(
+        left,
+        Style::default().fg(Color::DarkGray),
+    )]))
     .block(Block::default().borders(Borders::TOP));
     f.render_widget(p, area);
 }
@@ -144,24 +161,59 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 fn draw_help(f: &mut Frame, area: ratatui::layout::Rect) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled("  全局快捷键", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  ← / →       切换模块　Tab 亦可"),
+        Line::from(Span::styled(
+            "  全局快捷键",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  Tab / Ctrl+← / Ctrl+→   切换模块"),
+        Line::from("  ← / →                   局部导航（各模块内）"),
         Line::from("  H            显示 / 隐藏帮助　Q 退出"),
         Line::from(""),
-        Line::from(Span::styled("  模块一 诊断", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  Enter / R    运行诊断　F 自动修复　T 路由追踪"),
+        Line::from(Span::styled(
+            "  模块一 诊断",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  Enter / R    运行诊断　F 修复选中项　T 路由追踪　G 导出报告"),
+        Line::from("  ↑/↓ 选检查项　Enter 下钻详情（当前值 + 子动作）"),
         Line::from(""),
-        Line::from(Span::styled("  模块二 快捷设置", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  ↑/↓ 选择　Enter 执行　Esc 退出表单/排名"),
+        Line::from(Span::styled(
+            "  模块二 快捷设置",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  ↑/↓ 选字段/动作　Enter 切换/应用　Esc 退出表单"),
         Line::from(""),
-        Line::from(Span::styled("  模块三 网工工具", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  Enter 扫描连接　[ / ] 切厂商　I 输入模式　S 切波特率"),
+        Line::from(Span::styled(
+            "  模块三 网工工具",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  ←/→ 切连接类型（通用/eNSP）　Enter 扫描连接（连后自动识别型号）"),
+        Line::from("  I 输入模式　S 切波特率　[ / ] 手动切厂商"),
         Line::from(""),
-        Line::from(Span::styled("  模块四 拓扑", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from("  ↑/↓ 选设备　Enter 生成 CLI　O 打开编辑器　B 回读　E 导出 D2　D 下发"),
+        Line::from(Span::styled(
+            "  模块四 拓扑",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  ↑/↓ 选拓扑　Enter 打开　N 新建　R 重命名　C 复制　Delete 删除"),
+        Line::from("  O 打开编辑器　B 回读　E 导出 D2　D 下发 CLI"),
         Line::from(""),
-        Line::from(Span::styled("  说明", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "  说明",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from("  修改网络配置需管理员权限；修改类操作先自动备份可回退。"),
+        Line::from("  非输入态已禁用输入法，单字母热键不被组字窗拦截（F2 切换）。"),
     ];
     let p = Paragraph::new(lines).block(
         Block::default()

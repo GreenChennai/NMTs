@@ -74,7 +74,14 @@ pub fn backup_windows(root: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(&wlan_dir).ok();
     let _ = run(
         "netsh",
-        &["wlan", "export", "profile", "folder=", wlan_dir.to_str().unwrap_or("."), "key=clear"],
+        &[
+            "wlan",
+            "export",
+            "profile",
+            "folder=",
+            wlan_dir.to_str().unwrap_or("."),
+            "key=clear",
+        ],
         Duration::from_secs(20),
     );
 
@@ -146,7 +153,10 @@ pub fn backup_device(
 
 /// 恢复本机网络配置。
 pub fn restore_windows(bundle: &Path) -> Result<(), String> {
-    let tmp = std::env::temp_dir().join(format!("nmts_restore_{}", chrono::Local::now().timestamp_millis()));
+    let tmp = std::env::temp_dir().join(format!(
+        "nmts_restore_{}",
+        chrono::Local::now().timestamp_millis()
+    ));
     fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     unzip_dir(bundle, &tmp)?;
 
@@ -166,7 +176,11 @@ pub fn restore_windows(bundle: &Path) -> Result<(), String> {
         if let Ok(entries) = fs::read_dir(&wlan_dir) {
             for e in entries.flatten() {
                 let p = e.path().to_string_lossy().to_string();
-                let _ = run("netsh", &["wlan", "add", "profile", "filename=", &p], Duration::from_secs(15));
+                let _ = run(
+                    "netsh",
+                    &["wlan", "add", "profile", "filename=", &p],
+                    Duration::from_secs(15),
+                );
             }
         }
     }
@@ -190,7 +204,12 @@ pub fn list_bundles(root: &Path) -> Vec<PathBuf> {
     };
     let mut list: Vec<PathBuf> = entries
         .flatten()
-        .filter(|e| e.path().extension().map(|x| x == "nmtsbak").unwrap_or(false))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|x| x == "nmtsbak")
+                .unwrap_or(false)
+        })
         .map(|e| e.path())
         .collect();
     list.sort();
@@ -204,13 +223,23 @@ fn zip_dir(src: &Path, out: &Path) -> Result<(), String> {
     let mut zw = zip::ZipWriter::new(file);
     let opts = zip::write::SimpleFileOptions::default();
 
-    fn walk(zw: &mut zip::ZipWriter<fs::File>, dir: &Path, base: &Path, opts: zip::write::SimpleFileOptions) -> Result<(), String> {
+    fn walk(
+        zw: &mut zip::ZipWriter<fs::File>,
+        dir: &Path,
+        base: &Path,
+        opts: zip::write::SimpleFileOptions,
+    ) -> Result<(), String> {
         for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
-            let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
             if path.is_dir() {
-                zw.add_directory(rel.clone(), opts).map_err(|e| e.to_string())?;
+                zw.add_directory(rel.clone(), opts)
+                    .map_err(|e| e.to_string())?;
                 walk(zw, &path, base, opts)?;
             } else {
                 zw.start_file(rel, opts).map_err(|e| e.to_string())?;
@@ -254,7 +283,10 @@ mod tests {
 
     #[test]
     fn zip_roundtrip() {
-        let tmp = std::env::temp_dir().join(format!("nmts_zip_test_{}", chrono::Local::now().timestamp_millis()));
+        let tmp = std::env::temp_dir().join(format!(
+            "nmts_zip_test_{}",
+            chrono::Local::now().timestamp_millis()
+        ));
         fs::create_dir_all(tmp.join("windows")).unwrap();
         fs::write(tmp.join("manifest.json"), "{}").unwrap();
         fs::write(tmp.join("windows/netsh_ip_dump.txt"), "dump").unwrap();

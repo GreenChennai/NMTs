@@ -1,6 +1,6 @@
 [package]
 name = "nmts"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2021"
 description = "NMTs — Network Maintenance Tool set（Windows 网络维护工具集）"
 authors = ["GreenChennai <luvse@foxmail.com>"]
@@ -30,6 +30,7 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+windows = { version = "0.61.3", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Ime", "Win32_Foundation", "Win32_System_Console"] }
 zip = "2"
 
 [build-dependencies]

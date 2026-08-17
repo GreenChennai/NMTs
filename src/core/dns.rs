@@ -48,10 +48,12 @@ impl DnsDb {
             #[serde(default)]
             providers: Vec<DnsProvider>,
         }
-        serde_yaml::from_str::<Raw>(DNS_YAML).map(|r| Self {
-            categories: r.categories,
-            providers: r.providers,
-        }).unwrap_or_default()
+        serde_yaml::from_str::<Raw>(DNS_YAML)
+            .map(|r| Self {
+                categories: r.categories,
+                providers: r.providers,
+            })
+            .unwrap_or_default()
     }
 
     /// 按类别（default/family/secure）与协议（ipv4/ipv6/both）筛选候选。
@@ -79,19 +81,44 @@ pub struct DnsBench {
     pub provider: DnsProvider,
     pub latency_ms: Option<u32>,
     pub reachable: bool,
+    /// 协议版本（v4 / v6）。
+    pub protocol: IpVersion,
 }
 
-/// 并发测速：ping 每个候选 primary，取 RTT。
+/// IP 协议版本。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpVersion {
+    V4,
+    V6,
+}
+
+impl IpVersion {
+    pub fn label(&self) -> &'static str {
+        match self {
+            IpVersion::V4 => "v4",
+            IpVersion::V6 => "v6",
+        }
+    }
+}
+
+/// 判断 IP 是否为 IPv6 地址（含 `:` 即视为 v6）。
+pub fn is_ipv6(ip: &str) -> bool {
+    ip.contains(':')
+}
+
+/// 并发测速：ping 每个候选 primary，取 RTT（v6 候选用 `ping -6`）。
 pub async fn benchmark(providers: &[DnsProvider], max: usize) -> Vec<DnsBench> {
     let subset: Vec<DnsProvider> = providers.iter().take(max).cloned().collect();
     let mut handles = Vec::new();
     for p in subset {
         handles.push(tokio::spawn(async move {
-            let rtt = ping_rtt(&p.primary).await;
+            let ipv6 = is_ipv6(&p.primary);
+            let rtt = ping_rtt(&p.primary, ipv6).await;
             DnsBench {
                 provider: p,
                 latency_ms: rtt,
                 reachable: rtt.is_some(),
+                protocol: if ipv6 { IpVersion::V6 } else { IpVersion::V4 },
             }
         }));
     }
@@ -114,15 +141,36 @@ pub fn rank(mut results: Vec<DnsBench>, prefer_country: &str) -> Vec<DnsBench> {
             // 可达性
             .then_with(|| b.reachable.cmp(&a.reachable))
             // 延迟
-            .then_with(|| a.latency_ms.unwrap_or(u32::MAX).cmp(&b.latency_ms.unwrap_or(u32::MAX)))
+            .then_with(|| {
+                a.latency_ms
+                    .unwrap_or(u32::MAX)
+                    .cmp(&b.latency_ms.unwrap_or(u32::MAX))
+            })
     });
     results
 }
 
-async fn ping_rtt(ip: &str) -> Option<u32> {
+/// 测单个 IP 的 ping 延迟（下钻「DNS 测速」用，自动区分 v4/v6）。
+pub async fn ping_latency(ip: &str) -> Option<u32> {
+    ping_rtt(ip, is_ipv6(ip)).await
+}
+
+async fn ping_rtt(ip: &str, ipv6: bool) -> Option<u32> {
     let ip = ip.to_string();
     tokio::task::spawn_blocking(move || {
-        let out = run("ping", &["-n", "1", "-w", "1000", &ip], std::time::Duration::from_secs(4));
+        let out = if ipv6 {
+            run(
+                "ping",
+                &["-6", "-n", "1", "-w", "1000", &ip],
+                std::time::Duration::from_secs(4),
+            )
+        } else {
+            run(
+                "ping",
+                &["-n", "1", "-w", "1000", &ip],
+                std::time::Duration::from_secs(4),
+            )
+        };
         parse_rtt(&out.stdout)
     })
     .await
@@ -157,6 +205,18 @@ mod tests {
         let v4 = db.filter(&["default".into()], "ipv4");
         assert!(!v4.is_empty());
         assert!(v4.iter().any(|p| p.country == "CN"));
+        // 双栈：both 应含 v6 候选，ipv6 只含 v6
+        let both = db.filter(&["default".into()], "both");
+        assert!(both.iter().any(|p| is_ipv6(&p.primary)));
+        let v6 = db.filter(&["default".into()], "ipv6");
+        assert!(v6.iter().all(|p| is_ipv6(&p.primary)));
+    }
+
+    #[test]
+    fn ipv6_detect() {
+        assert!(is_ipv6("2400:3200::1"));
+        assert!(is_ipv6("2001:4860:4860::8888"));
+        assert!(!is_ipv6("223.5.5.5"));
     }
 
     #[test]
@@ -172,6 +232,7 @@ mod tests {
             },
             latency_ms: lat,
             reachable: lat.is_some(),
+            protocol: IpVersion::V4,
         };
         let v = vec![mk("US", Some(10)), mk("CN", Some(50)), mk("CN", Some(5))];
         let r = rank(v, "CN");
@@ -182,8 +243,14 @@ mod tests {
 
     #[test]
     fn parse_rtt_zh_en() {
-        assert_eq!(parse_rtt("来自 223.5.5.5 的回复: 字节=32 时间=8ms TTL=117"), Some(8));
-        assert_eq!(parse_rtt("Reply from 8.8.8.8: bytes=32 time=12ms TTL=117"), Some(12));
+        assert_eq!(
+            parse_rtt("来自 223.5.5.5 的回复: 字节=32 时间=8ms TTL=117"),
+            Some(8)
+        );
+        assert_eq!(
+            parse_rtt("Reply from 8.8.8.8: bytes=32 time=12ms TTL=117"),
+            Some(12)
+        );
         assert_eq!(parse_rtt("时间<1ms TTL=64"), Some(0));
         assert_eq!(parse_rtt("请求超时"), None);
     }

@@ -85,7 +85,10 @@ fn gen_ios(device: &Device, topo: &Topology) -> String {
         if !c.trunk_vlans.is_empty() {
             let ids: Vec<String> = c.trunk_vlans.iter().map(|v| v.to_string()).collect();
             s.push_str(" switchport mode trunk\n");
-            s.push_str(&format!(" switchport trunk allowed vlan {}\n", ids.join(",")));
+            s.push_str(&format!(
+                " switchport trunk allowed vlan {}\n",
+                ids.join(",")
+            ));
         } else if let Some(av) = c.access_vlan {
             s.push_str(" switchport mode access\n");
             s.push_str(&format!(" switchport access vlan {av}\n"));
@@ -113,9 +116,13 @@ fn device_ports(device: &Device, topo: &Topology) -> Vec<PortName> {
         .iter()
         .filter_map(|l| {
             if l.from == device.id {
-                Some(PortName { name: l.from_port.clone() })
+                Some(PortName {
+                    name: l.from_port.clone(),
+                })
             } else if l.to == device.id {
-                Some(PortName { name: l.to_port.clone() })
+                Some(PortName {
+                    name: l.to_port.clone(),
+                })
             } else {
                 None
             }
@@ -162,7 +169,11 @@ mod tests {
             creds: None,
             config: DeviceConfig {
                 hostname: "CORE".into(),
-                vlans: vec![crate::core::topology::Vlan { id: 10, name: "业务".into(), purpose: String::new() }],
+                vlans: vec![crate::core::topology::Vlan {
+                    id: 10,
+                    name: "业务".into(),
+                    purpose: String::new(),
+                }],
                 trunk_vlans: vec![10],
                 ..Default::default()
             },
@@ -174,9 +185,20 @@ mod tests {
             role: crate::core::topology::DeviceRole::Access,
             mgmt_ip: String::new(),
             creds: None,
-            config: DeviceConfig { hostname: "ACC1".into(), access_vlan: Some(10), ..Default::default() },
+            config: DeviceConfig {
+                hostname: "ACC1".into(),
+                access_vlan: Some(10),
+                ..Default::default()
+            },
         });
-        t.links.push(Link { from: "core".into(), to: "acc1".into(), from_port: "GE0/0/1".into(), to_port: "GE0/0/1".into() });
+        t.links.push(Link {
+            from: "core".into(),
+            to: "acc1".into(),
+            from_port: "GE0/0/1".into(),
+            to_port: "GE0/0/1".into(),
+            from_ip: String::new(),
+            to_ip: String::new(),
+        });
         t
     }
 

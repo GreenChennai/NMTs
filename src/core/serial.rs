@@ -79,6 +79,59 @@ impl SerialSession {
     pub fn read_chunk(&mut self, buf: &mut [u8]) -> Result<usize> {
         Ok(self.port.read(buf)?)
     }
+
+    /// 持续读取一段时间（约 `dur`），返回收到的文本（型号识别用）。
+    pub fn read_all(&mut self, dur: Duration) -> String {
+        let mut out = Vec::new();
+        let start = std::time::Instant::now();
+        let mut buf = [0u8; 256];
+        while start.elapsed() < dur {
+            match self.port.read(&mut buf) {
+                Ok(n) if n > 0 => out.extend_from_slice(&buf[..n]),
+                _ => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        String::from_utf8_lossy(&out).to_string()
+    }
+}
+
+/// 连后探测厂商与型号（V3.0 原则 P5）。
+///
+/// 先发 VRP 的 `display version`，命中 Huawei / H3C 即返回；否则发 IOS 的
+/// `show version`，命中 Cisco 即返回。返回 `(vendor id, 型号)`；无法识别返回 `None`。
+pub fn detect_vendor(sess: &mut SerialSession) -> Option<(String, String)> {
+    let _ = sess.write_line("display version");
+    let vrp = sess.read_all(Duration::from_millis(1200));
+    let lower = vrp.to_lowercase();
+    if lower.contains("huawei") {
+        return Some(("huawei_vrp".to_string(), extract_model(&vrp)));
+    }
+    if lower.contains("h3c") {
+        return Some(("h3c_vrp".to_string(), extract_model(&vrp)));
+    }
+
+    let _ = sess.write_line("show version");
+    let ios = sess.read_all(Duration::from_millis(1200));
+    let lower = ios.to_lowercase();
+    if lower.contains("cisco") {
+        return Some(("cisco_ios".to_string(), extract_model(&ios)));
+    }
+    None
+}
+
+/// 从设备回显中提取常见型号（S5731 / AR6300 / USG6000 / WS-C2960 / C9300 / SR6600 …）。
+fn extract_model(out: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)(S\d{4}|AR\d+|USG\d+|CE\d+|WS-C\d+|ISR\d+|C\d{4}|MSR\d+|SR\d+|CX\d+)",
+        )
+        .unwrap()
+    });
+    re.captures(out)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| "未知型号".to_string())
 }
 
 /// 波特率试探：按给定顺序连接并发送 `\r`，命中回显即返回。

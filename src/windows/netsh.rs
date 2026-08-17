@@ -22,6 +22,37 @@ pub fn set_dns(iface: &str, dns: &str) -> CmdOutput {
     run_netsh(&["interface", "ip", "set", "dns", iface, "static", dns])
 }
 
+/// 设置静态 IPv6 DNS（主）。
+pub fn set_dns_v6(iface: &str, dns: &str) -> CmdOutput {
+    run_netsh(&[
+        "interface",
+        "ipv6",
+        "set",
+        "dnsservers",
+        iface,
+        "static",
+        dns,
+    ])
+}
+
+/// 追加备用 IPv6 DNS。
+pub fn add_dns_v6(iface: &str, dns: &str) -> CmdOutput {
+    run_netsh(&[
+        "interface",
+        "ipv6",
+        "add",
+        "dnsservers",
+        iface,
+        dns,
+        "index=2",
+    ])
+}
+
+/// IPv6 DNS 切回 DHCP。
+pub fn set_dns_v6_dhcp(iface: &str) -> CmdOutput {
+    run_netsh(&["interface", "ipv6", "set", "dnsservers", iface, "dhcp"])
+}
+
 /// 切回 DHCP 自动获取 DNS。
 pub fn set_dns_dhcp(iface: &str) -> CmdOutput {
     run_netsh(&["interface", "ip", "set", "dns", iface, "dhcp"])
@@ -29,7 +60,17 @@ pub fn set_dns_dhcp(iface: &str) -> CmdOutput {
 
 /// 设置静态 IP / 掩码 / 网关。
 pub fn set_static_ip(iface: &str, ip: &str, mask: &str, gw: &str) -> CmdOutput {
-    run_netsh(&["interface", "ip", "set", "address", iface, "static", ip, mask, gw])
+    run_netsh(&[
+        "interface",
+        "ip",
+        "set",
+        "address",
+        iface,
+        "static",
+        ip,
+        mask,
+        gw,
+    ])
 }
 
 /// 切回 DHCP 自动获取 IP。

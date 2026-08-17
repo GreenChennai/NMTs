@@ -57,7 +57,7 @@ impl Default for DnsPreference {
     fn default() -> Self {
         Self {
             categories: vec!["default".into(), "family".into(), "secure".into()],
-            prefer_ipv: "ipv4".into(),
+            prefer_ipv: "both".into(),
             prefer_country: "CN".into(),
             test: DnsTest::default(),
             apply_when_better_than_current: true,
@@ -99,11 +99,7 @@ impl Default for TerminalConfig {
         Self {
             default_baud_rates: vec![9600, 115200, 19200, 38400, 57600],
             timeout_ms: 3000,
-            vendors: vec![
-                "huawei_vrp".into(),
-                "h3c_vrp".into(),
-                "cisco_ios".into(),
-            ],
+            vendors: vec!["huawei_vrp".into(), "h3c_vrp".into(), "cisco_ios".into()],
             ensp_compatible: true,
         }
     }
@@ -229,7 +225,10 @@ mod tests {
     fn default_config_parses() {
         let cfg = Config::default();
         assert_eq!(cfg.version, 1);
-        assert!(cfg.dns_preference.categories.contains(&"default".to_string()));
+        assert!(cfg
+            .dns_preference
+            .categories
+            .contains(&"default".to_string()));
         assert_eq!(cfg.terminal.default_baud_rates[0], 9600);
     }
 }

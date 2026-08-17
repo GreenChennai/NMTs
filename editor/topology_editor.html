@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>NMTs 拓扑编辑器</title>
+<title>NMTs 拓扑编辑器（V3.0）</title>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/@xyflow/react@12/dist/umd/index.js"></script>
@@ -13,80 +13,129 @@
   * { box-sizing: border-box; }
   body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:#e6e6e6; height:100vh; overflow:hidden; }
   #app { display:flex; height:100vh; }
-  .sidebar { width:220px; background:var(--panel); padding:12px; overflow-y:auto; border-right:1px solid #3a3a4a; }
+  .sidebar { width:210px; background:var(--panel); padding:12px; overflow-y:auto; border-right:1px solid #3a3a4a; }
   .sidebar h3 { font-size:13px; margin:8px 0; color:#9da5b4; }
-  .dev-btn { display:block; width:100%; margin:6px 0; padding:8px; background:#333; border:1px solid #444; border-radius:6px; color:#e6e6e6; cursor:pointer; text-align:left; font-size:13px; }
+  .dev-btn { display:block; width:100%; margin:4px 0; padding:7px; background:#333; border:1px solid #444; border-radius:6px; color:#e6e6e6; cursor:pointer; text-align:left; font-size:12px; }
   .dev-btn:hover { background:var(--accent); border-color:var(--accent); }
   #canvas { flex:1; }
-  .props { width:260px; background:var(--panel); padding:12px; border-left:1px solid #3a3a4a; overflow-y:auto; }
+  .props { width:280px; background:var(--panel); padding:12px; border-left:1px solid #3a3a4a; overflow-y:auto; }
   .props label { display:block; font-size:12px; margin:8px 0 2px; color:#9da5b4; }
-  .props input, .props select { width:100%; padding:6px; background:#1e1e2e; border:1px solid #444; border-radius:4px; color:#e6e6e6; font-size:13px; }
-  .toolbar { position:absolute; top:8px; left:232px; z-index:10; display:flex; gap:8px; }
-  .toolbar button { padding:6px 12px; background:var(--accent); border:none; border-radius:5px; color:#fff; cursor:pointer; font-size:13px; }
+  .props input, .props select, .props textarea { width:100%; padding:6px; background:#1e1e2e; border:1px solid #444; border-radius:4px; color:#e6e6e6; font-size:13px; }
+  .props textarea { min-height:60px; resize:vertical; }
+  .toolbar { position:absolute; top:8px; left:222px; z-index:10; display:flex; gap:6px; flex-wrap:wrap; }
+  .toolbar button { padding:6px 10px; background:var(--accent); border:none; border-radius:5px; color:#fff; cursor:pointer; font-size:12px; }
   .toolbar button.secondary { background:#444; }
-  .node-card { padding:8px 12px; border-radius:8px; border:2px solid #555; background:#2b2b3a; min-width:120px; text-align:center; }
+  .node-card { padding:8px 10px; border-radius:8px; border:2px solid #555; background:#2b2b3a; min-width:110px; text-align:center; position:relative; }
+  .node-card .icon { font-size:20px; line-height:1; }
   .node-card .role { font-size:10px; color:#9da5b4; }
   .node-card .name { font-size:13px; font-weight:600; }
+  .edge-label { font-size:11px; fill:#9da5b4; }
+  .hint { position:absolute; bottom:8px; left:222px; z-index:10; font-size:11px; color:#9da5b4; background:rgba(0,0,0,.5); padding:4px 8px; border-radius:4px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script>
-const { useState, useCallback, useMemo, useEffect } = React;
+const { useState, useCallback, useEffect } = React;
 const { ReactFlow, Background, Controls, MiniMap, addEdge, useNodesState, useEdgesState, Handle, Position } = ReactFlow;
 
+// V3.0：10 种设备角色 + 图标
 const VENDORS = { huawei_vrp:'华为', h3c_vrp:'H3C', cisco_ios:'Cisco' };
-const ROLES = { core:'核心', dist:'汇聚', access:'接入', router:'路由器', firewall:'防火墙' };
-const ICONS = { core:'🔷', dist:'🔶', access:'🟩', router:'🌐', firewall:'🛡️' };
+const ROLES = {
+  core:'核心', dist:'汇聚', access:'接入', router:'路由器', firewall:'防火墙',
+  server:'服务器', pc:'用户电脑', phone:'用户手机', ac:'AC 控制器', ap:'AP 接入点'
+};
+const ICONS = {
+  core:'🔷', dist:'🔶', access:'🟩', router:'🌐', firewall:'🛡️',
+  server:'🖥️', pc:'💻', phone:'📱', ac:'📡', ap:'📶'
+};
 
 function DeviceNode({ data, selected }) {
   return React.createElement('div', {
     className: 'node-card',
     style: { borderColor: selected ? '#238636' : '#555' }
   }, [
-    React.createElement(Handle, { key:'t', type:'target', position: Position.Left }),
-    React.createElement('div', { key:'i', className:'role' }, (ICONS[data.role]||'') + ' ' + (ROLES[data.role]||data.role)),
+    React.createElement(Handle, { key:'t', type:'target', position: Position.Left, style:{width:10,height:10} }),
+    React.createElement('div', { key:'i', className:'icon' }, ICONS[data.role] || '🔘'),
+    React.createElement('div', { key:'r', className:'role' }, (ROLES[data.role]||data.role)),
     React.createElement('div', { key:'n', className:'name' }, data.name || data.id),
     React.createElement('div', { key:'h', className:'role' }, data.config?.hostname || ''),
-    React.createElement(Handle, { key:'s', type:'source', position: Position.Right }),
+    React.createElement(Handle, { key:'s', type:'source', position: Position.Right, style:{width:10,height:10} }),
   ]);
 }
-
 const nodeTypes = { device: DeviceNode };
 
 function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const [sel, setSel] = useState(null); // { kind:'node'|'edge', id }
   const [model, setModel] = useState({ devices:[], links:[] });
 
-  const onConnect = useCallback((c) => setEdges((eds) => addEdge({ ...c, label:'链路' }, eds)), [setEdges]);
+  const onConnect = useCallback((c) =>
+    setEdges((eds) => addEdge({ ...c, label:'', data:{ from_port:'', to_port:'', from_ip:'', to_ip:'' } }, eds)),
+    [setEdges]);
 
   const addDevice = (role) => {
     const id = 'd' + Date.now();
     const node = {
       id, type:'device', position:{ x:80+Math.random()*300, y:80+Math.random()*300 },
-      data: { id, name:'新设备', role, config:{ hostname:'', vlans:[], trunk_vlans:[], access_vlan:null, l3_intfs:[], routing:'None', stp_enabled:true } }
+      data: { id, name:'新设备', vendor:'huawei_vrp', role,
+        config:{ hostname:'', vlans:[], trunk_vlans:[], access_vlan:null, l3_intfs:[], routing:'None', stp_enabled:true, dhcp_server:false } }
     };
     setNodes((nds) => nds.concat(node));
-    setSelectedId(id);
+    setSel({ kind:'node', id });
   };
 
-  const updateSelected = (patch) => {
-    setNodes((nds) => nds.map((n) => n.id === selectedId
-      ? { ...n, data: { ...n.data, ...patch } } : n));
+  const updateNode = (id, patch) =>
+    setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n));
+
+  const updateEdge = (id, patch) =>
+    setEdges((eds) => eds.map((e) => e.id === id
+      ? { ...e, data: { ...(e.data||{}), ...patch }, label: edgeLabel({ ...(e.data||{}), ...patch }) } : e));
+
+  const edgeLabel = (d) => {
+    const parts = [];
+    if (d.from_port || d.to_port) parts.push((d.from_port||'?') + '↔' + (d.to_port||'?'));
+    if (d.from_ip) parts.push(d.from_ip + (d.to_ip ? '/' + d.to_ip : ''));
+    return parts.join('  ');
   };
 
-  const selected = nodes.find((n) => n.id === selectedId);
+  const selectedNode = nodes.find((n) => n.id === (sel?.kind==='node' ? sel.id : null));
+  const selectedEdge = edges.find((e) => e.id === (sel?.kind==='edge' ? sel.id : null));
 
-  // 导出为 NMTs Topology JSON（通过 pywebview bridge 或复制）
+  // 一键布局
+  const layout = (mode) => {
+    setNodes((nds) => {
+      const n = nds.length;
+      return nds.map((nd, i) => {
+        let x, y;
+        if (mode === 'horizontal') { x = 60 + i*200; y = 120; }
+        else if (mode === 'vertical') { x = 120; y = 60 + i*140; }
+        else if (mode === 'grid') { const c = Math.ceil(Math.sqrt(n)); x = 60 + (i%c)*200; y = 60 + Math.floor(i/c)*140; }
+        else { x = 60 + i*180; y = 60 + (i%2)*120; }
+        return { ...nd, position:{ x, y } };
+      });
+    });
+  };
+
+  // VLAN 列表文本 <-> 数组
+  const vlansToText = (vlans) => (vlans||[]).map((v)=>v.id+':'+(v.name||'')).join(', ');
+  const vlansFromText = (txt) => txt.split(/[,，\s]+/).filter(Boolean).map((seg)=>{
+    const [id, name] = seg.split(':');
+    return { id: parseInt(id)||0, name: name||'' };
+  }).filter((v)=>v.id>0);
+
   const buildModel = () => {
     const devices = nodes.map((n) => ({
       id: n.id, name: n.data.name || n.id, vendor: n.data.vendor || 'huawei_vrp',
       role: n.data.role || 'access', mgmt_ip: n.data.mgmt_ip || '', creds: null,
       config: n.data.config || { hostname:'' }
     }));
-    const links = edges.map((e) => ({ from: e.source, to: e.target, from_port:'', to_port:'' }));
+    const links = edges.map((e) => ({
+      from: e.source, to: e.target,
+      from_port: e.data?.from_port || '', to_port: e.data?.to_port || '',
+      from_ip: e.data?.from_ip || '', to_ip: e.data?.to_ip || ''
+    }));
     return { devices, links };
   };
 
@@ -120,48 +169,81 @@ function App() {
       id:d.id, type:'device', position:{ x:80+Math.random()*300, y:80+Math.random()*300 },
       data:{ id:d.id, name:d.name, vendor:d.vendor, role:d.role, mgmt_ip:d.mgmt_ip, config:d.config }
     }));
-    const es = (m.links||[]).map((l, i) => ({ id:'e'+i, source:l.from, target:l.to, label:'链路' }));
+    const es = (m.links||[]).map((l, i) => ({
+      id:'e'+i, source:l.from, target:l.to,
+      data:{ from_port:l.from_port||'', to_port:l.to_port||'', from_ip:l.from_ip||'', to_ip:l.to_ip||'' },
+      label: edgeLabel({ from_port:l.from_port||'', to_port:l.to_port||'', from_ip:l.from_ip||'', to_ip:l.to_ip||'' })
+    }));
     setNodes(ns); setEdges(es);
   };
 
   useEffect(() => { load(); }, []);
 
   return React.createElement('div', { id:'app' },
-    React.createElement('div', { className:'sidebar' },
+    React.createElement('div', { className:'sidebar',
+      onMouseDown:(e)=>e.stopPropagation() },
       React.createElement('h3', null, '设备类型'),
-      ['core','dist','access','router','firewall'].map((r) =>
+      Object.keys(ROLES).map((r) =>
         React.createElement('button', { key:r, className:'dev-btn', onClick:()=>addDevice(r) },
-          (ICONS[r]||'') + ' ' + (ROLES[r]||r) ))
+          (ICONS[r]||'🔘') + ' ' + (ROLES[r]||r) ))
     ),
     React.createElement('div', { className:'toolbar' },
       React.createElement('button', { onClick: save }, '保存'),
       React.createElement('button', { className:'secondary', onClick: load }, '打开'),
-      React.createElement('button', { className:'secondary', onClick:()=>alert('导出 PNG 请用浏览器截图 / 后续集成') }, '导出 PNG')
+      React.createElement('button', { className:'secondary', onClick:()=>layout('horizontal') }, '水平布局'),
+      React.createElement('button', { className:'secondary', onClick:()=>layout('vertical') }, '垂直布局'),
+      React.createElement('button', { className:'secondary', onClick:()=>layout('grid') }, '网格布局'),
+      React.createElement('button', { className:'secondary', onClick:()=>layout('stagger') }, '间隔布局')
     ),
     React.createElement('div', { id:'canvas' },
       React.createElement(ReactFlow, {
         nodes, edges, onNodesChange, onEdgesChange, onConnect, nodeTypes,
-        onNodeClick:(_, n)=>setSelectedId(n.id), fitView:true
+        onNodeClick:(_, n)=>setSel({ kind:'node', id:n.id }),
+        onEdgeClick:(_, e)=>setSel({ kind:'edge', id:e.id }),
+        onPaneClick:()=>setSel(null),
+        snapToGrid:true, snapGrid:[20,20], fitView:true
       },
-        React.createElement(Background, null),
+        React.createElement(Background, { gap:20 }),
         React.createElement(Controls, null),
         React.createElement(MiniMap, null)
       )
     ),
+    React.createElement('div', { className:'hint' }, '拖拽吸附 20px 网格 · Shift 拖拽临时对齐 · 点击边编辑端口/IP'),
     React.createElement('div', { className:'props' },
-      React.createElement('h3', null, '设备属性'),
-      selected ? React.createElement('div', null,
+      selectedNode ? React.createElement('div', null,
+        React.createElement('h3', null, '设备属性'),
         React.createElement('label', null, '名称'),
-        React.createElement('input', { value: selected.data.name||'', onChange:(e)=>updateSelected({ name:e.target.value }) }),
+        React.createElement('input', { value: selectedNode.data.name||'', onChange:(e)=>updateNode(selectedNode.id,{ name:e.target.value }) }),
         React.createElement('label', null, '主机名 hostname'),
-        React.createElement('input', { value: selected.data.config?.hostname||'', onChange:(e)=>updateSelected({ config:{ ...selected.data.config, hostname:e.target.value } }) }),
+        React.createElement('input', { value: selectedNode.data.config?.hostname||'', onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, hostname:e.target.value } }) }),
         React.createElement('label', null, '厂商'),
-        React.createElement('select', { value: selected.data.vendor||'huawei_vrp', onChange:(e)=>updateSelected({ vendor:e.target.value }) },
+        React.createElement('select', { value: selectedNode.data.vendor||'huawei_vrp', onChange:(e)=>updateNode(selectedNode.id,{ vendor:e.target.value }) },
           Object.entries(VENDORS).map(([k,v])=>React.createElement('option',{ key:k, value:k }, v))),
         React.createElement('label', null, '角色'),
-        React.createElement('select', { value: selected.data.role||'access', onChange:(e)=>updateSelected({ role:e.target.value }) },
-          Object.entries(ROLES).map(([k,v])=>React.createElement('option',{ key:k, value:k }, v)))
-      ) : React.createElement('p', { style:{color:'#9da5b4',fontSize:'12px'} }, '点击节点编辑属性')
+        React.createElement('select', { value: selectedNode.data.role||'access', onChange:(e)=>updateNode(selectedNode.id,{ role:e.target.value }) },
+          Object.entries(ROLES).map(([k,v])=>React.createElement('option',{ key:k, value:k }, v))),
+        React.createElement('label', null, '管理 IP'),
+        React.createElement('input', { value: selectedNode.data.mgmt_ip||'', onChange:(e)=>updateNode(selectedNode.id,{ mgmt_ip:e.target.value }) }),
+        React.createElement('label', null, 'VLAN（格式 id:名称, 逗号分隔）'),
+        React.createElement('textarea', { value: vlansToText(selectedNode.data.config?.vlans),
+          onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, vlans:vlansFromText(e.target.value) } }) }),
+        React.createElement('label', null, '路由协议'),
+        React.createElement('select', { value: selectedNode.data.config?.routing||'None', onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, routing:e.target.value } }) },
+          ['None','Static','Ospf'].map((r)=>React.createElement('option',{ key:r, value:r }, r))),
+        React.createElement('label', null, 'STP'),
+        React.createElement('select', { value: selectedNode.data.config?.stp_enabled?'true':'false', onChange:(e)=>updateNode(selectedNode.id,{ config:{ ...selectedNode.data.config, stp_enabled:e.target.value==='true' } }) },
+          [['true','开启'],['false','关闭']].map(([k,v])=>React.createElement('option',{ key:k, value:k }, v)))
+      ) : selectedEdge ? React.createElement('div', null,
+        React.createElement('h3', null, '链路 / 端口'),
+        React.createElement('label', null, '源端口 from_port'),
+        React.createElement('input', { value: selectedEdge.data?.from_port||'', onChange:(e)=>updateEdge(selectedEdge.id,{ from_port:e.target.value }) }),
+        React.createElement('label', null, '目标端口 to_port'),
+        React.createElement('input', { value: selectedEdge.data?.to_port||'', onChange:(e)=>updateEdge(selectedEdge.id,{ to_port:e.target.value }) }),
+        React.createElement('label', null, '源接口 IP/掩码'),
+        React.createElement('input', { value: selectedEdge.data?.from_ip||'', placeholder:'192.168.1.1/24', onChange:(e)=>updateEdge(selectedEdge.id,{ from_ip:e.target.value }) }),
+        React.createElement('label', null, '目标接口 IP/掩码'),
+        React.createElement('input', { value: selectedEdge.data?.to_ip||'', placeholder:'192.168.1.2/24', onChange:(e)=>updateEdge(selectedEdge.id,{ to_ip:e.target.value }) })
+      ) : React.createElement('p', { style:{color:'#9da5b4',fontSize:'12px'} }, '点击节点编辑设备属性\n点击连线编辑端口/IP/掩码\n（VLAN/路由改动保存后由 NMTs 预检校验）')
     )
   );
 }

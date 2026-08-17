@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::time::Duration;
 
 use anyhow::Result;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -17,90 +17,125 @@ use crate::core::net_set;
 use crate::core::topology::{DeviceRole, Topology};
 use crate::core::{backup, design_check, dns, serial, topo_cli, topology, vendor_cli::VendorDb};
 use crate::ui;
+use crate::ui::ime;
+use crate::ui::nav::NavIntent;
 use crate::windows::adapter::Adapter;
 use crate::windows::probe::{probe_network, NetProbe};
 
 /// 五大模块。
 pub const TABS: [&str; 5] = ["网络诊断", "快捷设置", "网工工具", "拓扑图", "配置备份"];
 
-/// 模块二快捷设置操作。
+/// 模块二快捷设置操作（高级设置区动作）。
 #[derive(Debug, Clone, Copy)]
 pub enum QuickAction {
     FlushDns,
-    DnsDhcp,
-    IpDhcp,
     ReleaseRenew,
-    /// IPv6 单一开关（读取当前状态并反向切换）。
-    ToggleIpv6,
     TcpOptimize,
     /// DNS 优选：仅测速产出排名表，用户选中确认后才应用（见 2.4）。
     DnsOptimize,
-    /// 静态 IP 表单（手动填写 IP/掩码/网关/DNS）。
-    StaticIp,
 }
 
-/// 模块二操作项。
-#[derive(Debug, Clone, Copy)]
-pub struct QuickItem {
-    pub name: &'static str,
-    pub desc: &'static str,
-    pub action: QuickAction,
+/// 模块二高级设置动作。
+pub const ADVANCED_ACTIONS: [(&str, QuickAction); 4] = [
+    ("刷新 DNS 缓存", QuickAction::FlushDns),
+    ("释放并续租 IP", QuickAction::ReleaseRenew),
+    ("DNS 优选（测速排名）", QuickAction::DnsOptimize),
+    ("TCP 全局优化", QuickAction::TcpOptimize),
+];
+
+/// IPv4 / IPv6 字段标签（顺序：网关 / 掩码 / IP / 主 DNS / 备 DNS）。
+pub const IP_FIELD_LABELS: [&str; 5] = ["网关", "子网掩码", "IP 地址", "主 DNS", "备 DNS"];
+
+/// 模块二焦点行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QsRow {
+    Ipv4Toggle,
+    Ipv4Field(usize),
+    Ipv6Toggle,
+    Ipv6Field(usize),
+    AdvancedToggle,
+    AdvancedItem(usize),
 }
 
-fn quick_items() -> Vec<QuickItem> {
-    vec![
-        // DNS 组
-        QuickItem { name: "DNS 优选（测速排名）", desc: "并发测速就近排序，选中确认应用", action: QuickAction::DnsOptimize },
-        QuickItem { name: "DNS 切回自动获取", desc: "netsh set dns dhcp", action: QuickAction::DnsDhcp },
-        QuickItem { name: "刷新 DNS 缓存", desc: "ipconfig /flushdns", action: QuickAction::FlushDns },
-        // IP 组
-        QuickItem { name: "设置静态 IP（表单）", desc: "手动填 IP/掩码/网关/DNS", action: QuickAction::StaticIp },
-        QuickItem { name: "IP 切回自动获取", desc: "netsh set address dhcp", action: QuickAction::IpDhcp },
-        QuickItem { name: "释放并续租 IP", desc: "ipconfig /release + /renew", action: QuickAction::ReleaseRenew },
-        // 协议组
-        QuickItem { name: "IPv6 开关", desc: "读取当前状态并切换", action: QuickAction::ToggleIpv6 },
-        // 优化组
-        QuickItem { name: "TCP 全局优化", desc: "autotuninglevel=normal + ecn", action: QuickAction::TcpOptimize },
-    ]
-}
-
-/// 模块二状态。
+/// 模块二状态（V3.0 结构化设置面板）。
 #[derive(Debug)]
 pub struct QuickSetState {
-    pub selected: usize,
-    pub items: Vec<QuickItem>,
+    /// 当前焦点行索引（对应 `focus_rows` 动态列表）。
+    pub focus: usize,
     pub result: Option<String>,
-    pub offset: usize,
+    /// IPv4 是否静态（false=DHCP）。
+    pub ipv4_static: bool,
+    /// IPv4 静态表单字段（网关/掩码/IP/DNS1/DNS2）。
+    pub ipv4_fields: [String; 5],
+    /// IPv6 表单字段。
+    pub ipv6_fields: [String; 5],
+    /// 高级设置是否展开。
+    pub advanced_open: bool,
+    /// 高级设置选中项。
+    pub advanced_selected: usize,
+    /// 是否处于字段编辑态。
+    pub editing: bool,
+    /// 正在编辑的字段索引（0..5）。
+    pub field_idx: usize,
+    /// 编辑的是否为 IPv6 字段（否则 IPv4）。
+    pub editing_v6: bool,
+}
+
+impl QuickSetState {
+    /// 动态可聚焦行列表。
+    fn focus_rows(&self, ipv6_on: bool) -> Vec<QsRow> {
+        let mut rows = vec![QsRow::Ipv4Toggle];
+        if self.ipv4_static {
+            for i in 0..5 {
+                rows.push(QsRow::Ipv4Field(i));
+            }
+        }
+        rows.push(QsRow::Ipv6Toggle);
+        if ipv6_on {
+            for i in 0..5 {
+                rows.push(QsRow::Ipv6Field(i));
+            }
+        }
+        rows.push(QsRow::AdvancedToggle);
+        if self.advanced_open {
+            for i in 0..ADVANCED_ACTIONS.len() {
+                rows.push(QsRow::AdvancedItem(i));
+            }
+        }
+        rows
+    }
+
+    /// 当前焦点行。
+    pub fn current_row(&self, ipv6_on: bool) -> QsRow {
+        let rows = self.focus_rows(ipv6_on);
+        rows.get(self.focus).copied().unwrap_or(QsRow::Ipv4Toggle)
+    }
+
+    /// 移动焦点（带越界收敛）。
+    pub fn move_focus(&mut self, ipv6_on: bool, delta: i64) {
+        let rows = self.focus_rows(ipv6_on);
+        let n = rows.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self.focus as i64;
+        self.focus = ((cur + delta + n as i64) % n as i64) as usize;
+    }
 }
 
 impl Default for QuickSetState {
     fn default() -> Self {
         Self {
-            selected: 0,
-            items: quick_items(),
-            result: None,
-            offset: 0,
-        }
-    }
-}
-
-/// 模块二静态 IP 表单字段标签。
-pub const IP_FORM_FIELDS: [&str; 5] = ["IP 地址", "子网掩码", "默认网关", "主 DNS", "备 DNS"];
-
-/// 模块二静态 IP 表单状态（手动填写）。
-#[derive(Debug)]
-pub struct IpFormState {
-    pub active: bool,
-    pub fields: [String; 5],
-    pub focus: usize,
-}
-
-impl Default for IpFormState {
-    fn default() -> Self {
-        Self {
-            active: false,
-            fields: [String::new(), String::new(), String::new(), String::new(), String::new()],
             focus: 0,
+            result: None,
+            ipv4_static: false,
+            ipv4_fields: Default::default(),
+            ipv6_fields: Default::default(),
+            advanced_open: false,
+            advanced_selected: 0,
+            editing: false,
+            field_idx: 0,
+            editing_v6: false,
         }
     }
 }
@@ -113,10 +148,32 @@ pub enum ConnState {
     Connected,
 }
 
+/// 网工工具连接类型（V3.0 原则 P5：连前只选类型，连后识别厂商）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnType {
+    /// 通用（串口 / SSH / Telnet）。
+    Generic,
+    /// eNSP 模拟器（本地管道 / Telnet / COM 映射）。
+    Ensp,
+}
+
+impl ConnType {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ConnType::Generic => "通用",
+            ConnType::Ensp => "eNSP",
+        }
+    }
+}
+
 /// 网工工具终端事件（后台读线程 / 连接结果回传）。
 pub enum TermEvent {
     Echo(String),
-    Connected(std::sync::Arc<std::sync::Mutex<Box<dyn serialport::SerialPort>>>),
+    Connected {
+        sess: std::sync::Arc<std::sync::Mutex<Box<dyn serialport::SerialPort>>>,
+        vendor: Option<String>,
+        model: Option<String>,
+    },
     Failed(String),
 }
 
@@ -124,6 +181,7 @@ pub enum TermEvent {
 #[derive(Debug)]
 pub struct TermState {
     pub conn: ConnState,
+    pub conn_type: ConnType,
     pub vendor_idx: usize,
     pub cmd_idx: usize,
     pub cmd_offset: usize,
@@ -137,12 +195,17 @@ pub struct TermState {
     pub input: String,
     pub input_mode: bool,
     pub status: Option<String>,
+    /// 连后识别到的厂商 id（None=未识别）。
+    pub detected_vendor: Option<String>,
+    /// 连后识别到的设备型号。
+    pub detected_model: Option<String>,
 }
 
 impl Default for TermState {
     fn default() -> Self {
         Self {
             conn: ConnState::Disconnected,
+            conn_type: ConnType::Generic,
             vendor_idx: 0,
             cmd_idx: 0,
             cmd_offset: 0,
@@ -154,6 +217,8 @@ impl Default for TermState {
             input: String::new(),
             input_mode: false,
             status: None,
+            detected_vendor: None,
+            detected_model: None,
         }
     }
 }
@@ -188,16 +253,60 @@ pub struct DnsState {
     pub interactive: bool,
 }
 
+/// 单个拓扑条目（含预检结果缓存）。
+#[derive(Debug)]
+pub struct TopoEntry {
+    pub name: String,
+    pub topology: Topology,
+    pub findings: Vec<design_check::Finding>,
+}
+
+/// 拓扑模块导航层级（V3.0 三级导航）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopoMode {
+    /// 一级：拓扑列表（新建 / 导入 / 多拓扑）。
+    List,
+    /// 二级：操作菜单（打开编辑 / 重命名 / 复制 / 导出 / 删除）。
+    Menu,
+    /// 三级：拓扑详情（设备列表 + 预检常驻 + CLI）。
+    Detail,
+}
+
 /// 模块四（拓扑图）状态。
 #[derive(Debug)]
 pub struct TopoState {
-    pub topology: Topology,
-    pub findings: Vec<design_check::Finding>,
+    pub entries: Vec<TopoEntry>,
     pub selected: usize,
+    pub mode: TopoMode,
+    /// 二级菜单选中项。
+    pub menu_idx: usize,
+    /// 三级详情中选中的设备。
+    pub dev_idx: usize,
     pub cli: Option<String>,
     pub status: Option<String>,
     pub offset: usize,
     pub findings_offset: usize,
+}
+
+/// 二级菜单操作项。
+pub const TOPO_MENU: [&str; 5] = [
+    "打开编辑",
+    "重命名",
+    "复制一份",
+    "导出（D2/SVG/CLI）",
+    "删除",
+];
+
+impl TopoState {
+    /// 当前选中的拓扑条目。
+    pub fn current(&self) -> Option<&TopoEntry> {
+        self.entries.get(self.selected)
+    }
+
+    /// 当前选中的拓扑条目（可变）。
+    pub fn current_mut(&mut self) -> Option<&mut TopoEntry> {
+        self.entries.get_mut(self.selected)
+    }
 }
 
 impl Default for TopoState {
@@ -207,16 +316,30 @@ impl Default for TopoState {
             &topology,
             &[
                 design_check::Intent::UniqueSubnet,
-                design_check::Intent::VlanPropagated { vlan: 10, to: DeviceRole::Access },
-                design_check::Intent::VlanPropagated { vlan: 20, to: DeviceRole::Access },
-                design_check::Intent::RedundantUplink { role: DeviceRole::Access },
+                design_check::Intent::VlanPropagated {
+                    vlan: 10,
+                    to: DeviceRole::Access,
+                },
+                design_check::Intent::VlanPropagated {
+                    vlan: 20,
+                    to: DeviceRole::Access,
+                },
+                design_check::Intent::RedundantUplink {
+                    role: DeviceRole::Access,
+                },
                 design_check::Intent::NoLoop,
             ],
         );
         Self {
-            topology,
-            findings,
+            entries: vec![TopoEntry {
+                name: "演示拓扑".to_string(),
+                topology,
+                findings,
+            }],
             selected: 0,
+            mode: TopoMode::List,
+            menu_idx: 0,
+            dev_idx: 0,
             cli: None,
             status: None,
             offset: 0,
@@ -235,6 +358,12 @@ pub struct DiagState {
     pub logs: Vec<String>,
     pub summary: Option<String>,
     pub offset: usize,
+    /// 当前选中检查项（单项检测 / 修复 / 下钻作用域）。
+    pub selected: usize,
+    /// 是否处于下钻面板（详情抽屉）。
+    pub drill_open: bool,
+    /// 下钻面板选中的子动作。
+    pub drill_selected: usize,
 }
 
 impl DiagState {
@@ -245,6 +374,8 @@ impl DiagState {
         self.results = vec![None; self.names.len()];
         self.logs.clear();
         self.summary = None;
+        self.drill_open = false;
+        self.drill_selected = 0;
     }
 }
 
@@ -256,10 +387,13 @@ pub struct App {
     pub active_adapter: Option<Adapter>,
     pub env_ready: bool,
     pub ipv6_on: bool,
+    /// 当前上网网卡的 DNS 服务器（下钻「DNS 测速」用）。
+    pub current_dns: Vec<String>,
+    /// 当前上网网卡的 MAC 地址（模块二只读展示）。
+    pub current_mac: String,
     pub tab: usize,
     pub diag: DiagState,
     pub quick_set: QuickSetState,
-    pub ip_form: IpFormState,
     pub term: TermState,
     pub vendor_db: VendorDb,
     pub backup: BackupState,
@@ -267,6 +401,8 @@ pub struct App {
     pub dns: DnsState,
     pub show_help: bool,
     pub status_msg: Option<String>,
+    /// IME 是否已开启（默认禁用，F2 全局切换）。
+    ime_on: bool,
     running: bool,
     tx: UnboundedSender<DiagEvent>,
     rx: UnboundedReceiver<DiagEvent>,
@@ -306,10 +442,11 @@ impl App {
             active_adapter: None,
             env_ready: false,
             ipv6_on: false,
+            current_dns: Vec::new(),
+            current_mac: String::new(),
             tab: 0,
             diag: DiagState::default(),
             quick_set: QuickSetState::default(),
-            ip_form: IpFormState::default(),
             term: TermState {
                 ports: serial::list_ports(),
                 ..Default::default()
@@ -320,6 +457,7 @@ impl App {
             dns: DnsState::default(),
             show_help: false,
             status_msg: None,
+            ime_on: false,
             running: true,
             tx,
             rx,
@@ -340,12 +478,16 @@ impl App {
         self.adapters = p.adapters.clone();
         self.active_adapter = p.active_adapter().cloned();
         self.ipv6_on = p.ipv6_enabled;
+        self.current_dns = p.dns.clone();
+        self.current_mac = p.mac.clone();
         self.env_ready = true;
     }
 
     pub fn run(&mut self) -> Result<()> {
         let mut terminal = ratatui::init();
         terminal.clear()?;
+        // 非输入态禁用输入法（V3.0 P2）：单字母热键不被组字窗拦截。
+        ime::disable_ime();
 
         while self.running {
             self.drain_events();
@@ -357,36 +499,88 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        self.on_key(key.code);
+                        self.on_key(key);
                     }
                 }
             }
         }
 
+        ime::enable_ime();
         ratatui::restore();
         Ok(())
     }
 
-    fn on_key(&mut self, code: KeyCode) {
+    fn on_key(&mut self, key: KeyEvent) {
+        let code = key.code;
+
+        // 顶层：模块切换仅由 NavIntent 触发（Tab / Ctrl+Tab / Ctrl+← / Ctrl+→）。
+        // 普通 ←/→ 下派给当前模块局部导航（见 ui/nav.rs）。
+        match crate::ui::nav::nav_intent(code, key.modifiers) {
+            NavIntent::ModuleNext => {
+                self.tab = (self.tab + 1) % TABS.len();
+                return;
+            }
+            NavIntent::ModulePrev => {
+                self.tab = (self.tab + TABS.len() - 1) % TABS.len();
+                return;
+            }
+            NavIntent::None => {}
+        }
+
         match code {
             KeyCode::Char('q') | KeyCode::Char('Q') => self.running = false,
-            KeyCode::Char('h') | KeyCode::Char('?') | KeyCode::F(1) => self.show_help = !self.show_help,
+            KeyCode::Char('h') | KeyCode::Char('?') | KeyCode::F(1) => {
+                self.show_help = !self.show_help
+            }
+            KeyCode::F(2) => self.toggle_ime(),
             KeyCode::Esc => {
                 if self.show_help {
                     self.show_help = false;
+                } else if self.diag.drill_open {
+                    self.diag.drill_open = false;
                 } else if self.dns.interactive {
                     self.dns.interactive = false;
-                } else if self.ip_form.active {
-                    self.ip_form.active = false;
+                } else if self.quick_set.editing {
+                    self.quick_set.editing = false;
                 } else if self.term.input_mode {
                     self.term.input_mode = false;
+                } else if self.tab == 3 {
+                    match self.topo.mode {
+                        TopoMode::Menu => self.topo.mode = TopoMode::List,
+                        TopoMode::Detail => self.topo.mode = TopoMode::Menu,
+                        TopoMode::List => {}
+                    }
                 }
             }
-            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
-                self.tab = (self.tab + 1) % TABS.len();
+            KeyCode::Left => {
+                if self.tab == 2 {
+                    if self.term.conn == ConnState::Disconnected {
+                        // 未连接：←/→ 切换连接类型（通用 / eNSP）
+                        self.term.conn_type = match self.term.conn_type {
+                            ConnType::Generic => ConnType::Ensp,
+                            ConnType::Ensp => ConnType::Generic,
+                        };
+                    } else if !self.vendor_db.vendors().is_empty() {
+                        // 已连接：←/→ 手动覆盖厂商
+                        let n = self.vendor_db.vendors().len();
+                        self.term.vendor_idx = (self.term.vendor_idx + n - 1) % n;
+                        self.term.cmd_idx = 0;
+                    }
+                }
             }
-            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('j') => {
-                self.tab = (self.tab + TABS.len() - 1) % TABS.len();
+            KeyCode::Right => {
+                if self.tab == 2 {
+                    if self.term.conn == ConnState::Disconnected {
+                        self.term.conn_type = match self.term.conn_type {
+                            ConnType::Generic => ConnType::Ensp,
+                            ConnType::Ensp => ConnType::Generic,
+                        };
+                    } else if !self.vendor_db.vendors().is_empty() {
+                        let n = self.vendor_db.vendors().len();
+                        self.term.vendor_idx = (self.term.vendor_idx + 1) % n;
+                        self.term.cmd_idx = 0;
+                    }
+                }
             }
             KeyCode::Char('[') => {
                 if self.tab == 2 && !self.vendor_db.vendors().is_empty() {
@@ -403,17 +597,27 @@ impl App {
                 }
             }
             KeyCode::Up => match self.tab {
+                0 => {
+                    if self.diag.drill_open {
+                        self.diag.drill_selected = self.diag.drill_selected.saturating_sub(1);
+                    } else if self.diag.started && !self.diag.results.is_empty() {
+                        let n = self.diag.results.len();
+                        self.diag.selected = (self.diag.selected + n - 1) % n;
+                    }
+                }
                 1 => {
-                    if self.ip_form.active {
-                        self.ip_form.focus = self.ip_form.focus.saturating_sub(1);
+                    if self.quick_set.editing {
+                        if self.quick_set.field_idx > 0 {
+                            self.quick_set.field_idx -= 1;
+                        }
                     } else if self.dns.interactive {
                         let n = self.dns.results.len();
                         if n > 0 {
                             self.dns.selected = (self.dns.selected + n - 1) % n;
                         }
-                    } else if !self.quick_set.items.is_empty() {
-                        let n = self.quick_set.items.len();
-                        self.quick_set.selected = (self.quick_set.selected + n - 1) % n;
+                    } else {
+                        let on = self.ipv6_on;
+                        self.quick_set.move_focus(on, -1);
                     }
                 }
                 2 => {
@@ -426,24 +630,34 @@ impl App {
                         self.term_move(-1);
                     }
                 }
-                3 => self.topo.selected = self.topo.selected.saturating_sub(1),
+                3 => self.topo_nav(-1),
                 4 => self.backup.selected = self.backup.selected.saturating_sub(1),
                 _ => {}
             },
             KeyCode::Down => match self.tab {
+                0 => {
+                    if self.diag.drill_open {
+                        if self.diag.drill_selected + 1 < self.drill_count() {
+                            self.diag.drill_selected += 1;
+                        }
+                    } else if self.diag.started && !self.diag.results.is_empty() {
+                        let n = self.diag.results.len();
+                        self.diag.selected = (self.diag.selected + 1) % n;
+                    }
+                }
                 1 => {
-                    if self.ip_form.active {
-                        if self.ip_form.focus + 1 < 5 {
-                            self.ip_form.focus += 1;
+                    if self.quick_set.editing {
+                        if self.quick_set.field_idx + 1 < 5 {
+                            self.quick_set.field_idx += 1;
                         }
                     } else if self.dns.interactive {
                         let n = self.dns.results.len();
                         if n > 0 {
                             self.dns.selected = (self.dns.selected + 1) % n;
                         }
-                    } else if !self.quick_set.items.is_empty() {
-                        let n = self.quick_set.items.len();
-                        self.quick_set.selected = (self.quick_set.selected + 1) % n;
+                    } else {
+                        let on = self.ipv6_on;
+                        self.quick_set.move_focus(on, 1);
                     }
                 }
                 2 => {
@@ -456,12 +670,7 @@ impl App {
                         self.term_move(1);
                     }
                 }
-                3 => {
-                    let n = self.topo.topology.devices.len();
-                    if n > 0 && self.topo.selected + 1 < n {
-                        self.topo.selected += 1;
-                    }
-                }
+                3 => self.topo_nav(1),
                 4 => {
                     if self.backup.selected < 3 {
                         self.backup.selected += 1;
@@ -472,6 +681,8 @@ impl App {
             KeyCode::Char('i') | KeyCode::Char('I') => {
                 if self.tab == 2 && self.term.conn == ConnState::Connected {
                     self.term.input_mode = true;
+                } else if self.tab == 3 && self.topo.mode == TopoMode::List {
+                    self.topo_import();
                 }
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
@@ -489,7 +700,7 @@ impl App {
             }
             KeyCode::Char('f') | KeyCode::Char('F') => {
                 if self.tab == 0 && self.diag.started && !self.diag.running {
-                    self.execute_auto_fixes();
+                    self.execute_auto_fix_one(self.diag.selected);
                 }
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
@@ -500,6 +711,11 @@ impl App {
             KeyCode::Char('g') | KeyCode::Char('G') => {
                 if self.tab == 0 {
                     self.export_report();
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                if self.tab == 3 && self.topo.mode == TopoMode::List {
+                    self.topo_new();
                 }
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
@@ -517,66 +733,66 @@ impl App {
                     self.topo_load_json();
                 }
             }
-            KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
-                match self.tab {
-                    0 => {
-                        if !self.diag.running {
-                            self.start_diag();
-                        }
+            KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => match self.tab {
+                0 => {
+                    if self.diag.drill_open {
+                        self.execute_drill();
+                    } else if self.diag.started && !self.diag.running {
+                        self.diag.drill_open = true;
+                        self.diag.drill_selected = 0;
+                    } else if !self.diag.running {
+                        self.start_diag();
                     }
-                    1 => {
-                        if self.ip_form.active {
-                            self.submit_static_ip();
-                        } else if self.dns.interactive {
-                            self.execute_dns_apply();
-                        } else if let Some(item) = self.quick_set.items.get(self.quick_set.selected) {
-                            let action = item.action;
-                            self.execute_quick(action);
-                        }
-                    }
-                    2 => match self.term.conn {
-                        ConnState::Disconnected => self.scan_connect(),
-                        ConnState::Connected => {
-                            if self.term.input_mode {
-                                self.term_send_input();
-                            } else {
-                                self.term_send();
-                            }
-                        }
-                        ConnState::Scanning => {}
-                    },
-                    3 => self.topo_gen_cli(),
-                    4 => {
-                        let sel = self.backup.selected;
-                        self.execute_backup(sel);
-                    }
-                    _ => {}
                 }
-            }
-            KeyCode::Backspace => {
-                if self.tab == 1 && self.ip_form.active {
-                    if let Some(f) = self.ip_form.fields.get_mut(self.ip_form.focus) {
-                        f.pop();
+                1 => self.on_quick_enter(),
+                2 => match self.term.conn {
+                    ConnState::Disconnected => self.scan_connect(),
+                    ConnState::Connected => {
+                        if self.term.input_mode {
+                            self.term_send_input();
+                        } else {
+                            self.term_send();
+                        }
                     }
+                    ConnState::Scanning => {}
+                },
+                3 => self.topo_enter(),
+                4 => {
+                    let sel = self.backup.selected;
+                    self.execute_backup(sel);
+                }
+                _ => {}
+            },
+            KeyCode::Backspace => {
+                if self.tab == 1 && self.quick_set.editing {
+                    self.quick_input_backspace();
                 } else if self.tab == 2 && self.term.input_mode {
                     self.term.input.pop();
                 }
             }
             KeyCode::Char(c) => {
-                if self.tab == 1 && self.ip_form.active {
+                if self.tab == 1 && self.quick_set.editing {
                     // 表单输入：数字、点、冒号、十六进制字母
                     if c.is_ascii_digit() || c == '.' || c == ':' || "abcdefABCDEF".contains(c) {
-                        if let Some(f) = self.ip_form.fields.get_mut(self.ip_form.focus) {
-                            if f.len() < 45 {
-                                f.push(c);
-                            }
-                        }
+                        self.quick_input_push(c);
                     }
                 } else if self.tab == 2 && self.term.input_mode {
                     self.term.input.push(c);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// F2：临时切换 IME 开/关（应付意外卡死）。
+    fn toggle_ime(&mut self) {
+        self.ime_on = !self.ime_on;
+        if self.ime_on {
+            ime::enable_ime();
+            self.status_msg = Some("输入法已开启".into());
+        } else {
+            ime::disable_ime();
+            self.status_msg = Some("输入法已禁用".into());
         }
     }
 
@@ -591,48 +807,40 @@ impl App {
         let (ok, msg) = match action {
             QuickAction::FlushDns => {
                 let o = net_set::flush_dns();
-                (o.success, if o.success { "已刷新 DNS 缓存".into() } else { o.combined() })
-            }
-            QuickAction::DnsDhcp => {
-                if iface.is_empty() {
-                    (false, "未找到当前上网网卡".into())
-                } else {
-                    let o = net_set::set_dns_dhcp(&iface);
-                    (o.success, if o.success { "DNS 已切回自动获取".into() } else { o.combined() })
-                }
-            }
-            QuickAction::IpDhcp => {
-                if iface.is_empty() {
-                    (false, "未找到当前上网网卡".into())
-                } else {
-                    let o = net_set::set_ip_dhcp(&iface);
-                    (o.success, if o.success { "IP 已切回自动获取".into() } else { o.combined() })
-                }
+                (
+                    o.success,
+                    if o.success {
+                        "已刷新 DNS 缓存".into()
+                    } else {
+                        o.combined()
+                    },
+                )
             }
             QuickAction::ReleaseRenew => {
                 if iface.is_empty() {
                     (false, "未找到当前上网网卡".into())
                 } else {
                     let o = net_set::release_renew(&iface);
-                    (o.success, if o.success { "已释放并重新获取 IP".into() } else { o.combined() })
+                    (
+                        o.success,
+                        if o.success {
+                            "已释放并重新获取 IP".into()
+                        } else {
+                            o.combined()
+                        },
+                    )
                 }
-            }
-            QuickAction::ToggleIpv6 => {
-                let o = net_set::set_ipv6(!self.ipv6_on);
-                if o.success {
-                    self.ipv6_on = !self.ipv6_on;
-                }
-                let target = if self.ipv6_on { "启用" } else { "禁用" };
-                (o.success, if o.success { format!("IPv6 已切换为{target}") } else { o.combined() })
-            }
-            QuickAction::StaticIp => {
-                self.ip_form.active = true;
-                self.ip_form.focus = 0;
-                (true, "进入静态 IP 表单：↑/↓ 选字段 · 输入 · Enter 应用 · Esc 返回".into())
             }
             QuickAction::TcpOptimize => {
                 let o = net_set::tcp_optimize();
-                (o.success, if o.success { "TCP 已优化（自动调谐 + ECN）".into() } else { o.combined() })
+                (
+                    o.success,
+                    if o.success {
+                        "TCP 已优化（自动调谐 + ECN）".into()
+                    } else {
+                        o.combined()
+                    },
+                )
             }
             QuickAction::DnsOptimize => {
                 if iface.is_empty() {
@@ -646,7 +854,12 @@ impl App {
                     self.dns.offset = 0;
                     self.dns.status = Some("DNS 优选测速中…".into());
                     let categories = self.config.dns_preference.categories.clone();
-                    let prefer_ipv = self.config.dns_preference.prefer_ipv.clone();
+                    // 本机启用 IPv6 才测 v6 候选，否则强制回落 ipv4（避免无 v6 机器测 v6 超时）
+                    let prefer_ipv = if self.ipv6_on {
+                        self.config.dns_preference.prefer_ipv.clone()
+                    } else {
+                        "ipv4".to_string()
+                    };
                     let prefer_country = self.config.dns_preference.prefer_country.clone();
                     let tx = self.dns_tx.clone();
                     self.rt.spawn(async move {
@@ -659,7 +872,10 @@ impl App {
                         } else {
                             "无可达候选 DNS".to_string()
                         };
-                        let _ = tx.send(DnsUpdate { results: ranked, status });
+                        let _ = tx.send(DnsUpdate {
+                            results: ranked,
+                            status,
+                        });
                     });
                     (true, "已启动 DNS 优选测速（不会自动应用）".into())
                 }
@@ -692,21 +908,94 @@ impl App {
         }
         // 应用前备份原配置，可回退
         let _ = net_set::backup_network(&crate::config::app_root());
-        let _ = net_set::set_dns(&iface, &best.provider.primary);
-        if !best.provider.secondary.is_empty() {
-            let _ = net_set::add_dns(&iface, &best.provider.secondary);
+        // 按协议写 v4 或 v6 DNS
+        match best.protocol {
+            dns::IpVersion::V6 => {
+                let _ = net_set::set_dns_v6(&iface, &best.provider.primary);
+                if !best.provider.secondary.is_empty() {
+                    let _ = net_set::add_dns_v6(&iface, &best.provider.secondary);
+                }
+            }
+            dns::IpVersion::V4 => {
+                let _ = net_set::set_dns(&iface, &best.provider.primary);
+                if !best.provider.secondary.is_empty() {
+                    let _ = net_set::add_dns(&iface, &best.provider.secondary);
+                }
+            }
         }
         let msg = format!(
             "✓ 已应用 DNS {}（{} / {}）",
             best.provider.name, best.provider.primary, best.provider.secondary
         );
         self.quick_set.result = Some(msg.clone());
-        self.dns.status = Some(format!("已应用 {}，原 DNS 已备份可回退", best.provider.name));
+        self.dns.status = Some(format!(
+            "已应用 {}，原 DNS 已备份可回退",
+            best.provider.name
+        ));
         self.dns.interactive = false;
     }
 
-    /// 模块二：提交静态 IP 表单。
-    fn submit_static_ip(&mut self) {
+    /// 模块二：Enter 键分发（结构化面板）。
+    fn on_quick_enter(&mut self) {
+        // 编辑态：提交表单
+        if self.quick_set.editing {
+            self.submit_ip_form();
+            return;
+        }
+        // DNS 优选交互模式
+        if self.dns.interactive {
+            self.execute_dns_apply();
+            return;
+        }
+        let on = self.ipv6_on;
+        match self.quick_set.current_row(on) {
+            QsRow::Ipv4Toggle => self.toggle_ipv4_dhcp(),
+            QsRow::Ipv4Field(i) => self.begin_edit(false, i),
+            QsRow::Ipv6Toggle => self.toggle_ipv6(),
+            QsRow::Ipv6Field(i) => self.begin_edit(true, i),
+            QsRow::AdvancedToggle => {
+                self.quick_set.advanced_open = !self.quick_set.advanced_open;
+                self.quick_set.advanced_selected = 0;
+            }
+            QsRow::AdvancedItem(i) => {
+                if let Some((_, action)) = ADVANCED_ACTIONS.get(i) {
+                    self.execute_quick(*action);
+                }
+            }
+        }
+    }
+
+    /// 进入字段编辑态。
+    fn begin_edit(&mut self, v6: bool, idx: usize) {
+        self.quick_set.editing = true;
+        self.quick_set.editing_v6 = v6;
+        self.quick_set.field_idx = idx;
+    }
+
+    /// 编辑态：输入一个字符。
+    fn quick_input_push(&mut self, c: char) {
+        let field = if self.quick_set.editing_v6 {
+            &mut self.quick_set.ipv6_fields[self.quick_set.field_idx]
+        } else {
+            &mut self.quick_set.ipv4_fields[self.quick_set.field_idx]
+        };
+        if field.len() < 45 {
+            field.push(c);
+        }
+    }
+
+    /// 编辑态：删除一个字符。
+    fn quick_input_backspace(&mut self) {
+        let field = if self.quick_set.editing_v6 {
+            &mut self.quick_set.ipv6_fields[self.quick_set.field_idx]
+        } else {
+            &mut self.quick_set.ipv4_fields[self.quick_set.field_idx]
+        };
+        field.pop();
+    }
+
+    /// IPv4 静态 / DHCP 切换。
+    fn toggle_ipv4_dhcp(&mut self) {
         let iface = self
             .active_adapter
             .as_ref()
@@ -716,31 +1005,95 @@ impl App {
             self.quick_set.result = Some("✗ 未找到当前上网网卡".into());
             return;
         }
-        let ip = self.ip_form.fields[0].clone();
-        let mask = self.ip_form.fields[1].clone();
-        let gw = self.ip_form.fields[2].clone();
-        let dns1 = self.ip_form.fields[3].clone();
-        let dns2 = self.ip_form.fields[4].clone();
+        let _ = net_set::backup_network(&crate::config::app_root());
+        if self.quick_set.ipv4_static {
+            let o = net_set::set_ip_dhcp(&iface);
+            if o.success {
+                self.quick_set.ipv4_static = false;
+                self.quick_set.result = Some("✓ IPv4 已切回 DHCP 自动获取".into());
+            } else {
+                self.quick_set.result = Some(format!("✗ {}", o.combined()));
+            }
+        } else {
+            self.quick_set.ipv4_static = true;
+            self.quick_set.result = Some("已切换为静态 IP：填字段后 Enter 应用".into());
+        }
+    }
 
-        if ip.is_empty() || mask.is_empty() {
-            self.quick_set.result = Some("✗ 请至少填写 IP 地址和子网掩码".into());
+    /// IPv6 开启 / 关闭切换。
+    fn toggle_ipv6(&mut self) {
+        let o = net_set::set_ipv6(!self.ipv6_on);
+        if o.success {
+            self.ipv6_on = !self.ipv6_on;
+        }
+        let target = if self.ipv6_on { "启用" } else { "禁用" };
+        self.quick_set.result = Some(if o.success {
+            format!("✓ IPv6 已切换为{target}")
+        } else {
+            format!("✗ {}", o.combined())
+        });
+    }
+
+    /// 提交 IPv4 或 IPv6 静态表单。
+    fn submit_ip_form(&mut self) {
+        let iface = self
+            .active_adapter
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        if iface.is_empty() {
+            self.quick_set.result = Some("✗ 未找到当前上网网卡".into());
+            self.quick_set.editing = false;
             return;
         }
-
-        // 应用前备份
-        let _ = net_set::backup_network(&crate::config::app_root());
-        let o = net_set::set_static_ip(&iface, &ip, &mask, if gw.is_empty() { "" } else { &gw });
-        if o.success {
-            if !dns1.is_empty() {
-                let _ = net_set::set_dns(&iface, &dns1);
+        if self.quick_set.editing_v6 {
+            // IPv6 表单：目前仅支持写 v6 DNS（静态 v6 地址需 slaac/前缀，暂简化为 DNS 落地）
+            let dns1 = self.quick_set.ipv6_fields[3].clone();
+            let dns2 = self.quick_set.ipv6_fields[4].clone();
+            if dns1.is_empty() {
+                self.quick_set.result = Some("✗ 请至少填写 IPv6 主 DNS".into());
+                return;
             }
+            let _ = net_set::backup_network(&crate::config::app_root());
+            let _ = net_set::set_dns_v6(&iface, &dns1);
             if !dns2.is_empty() {
-                let _ = net_set::add_dns(&iface, &dns2);
+                let _ = net_set::add_dns_v6(&iface, &dns2);
             }
-            self.quick_set.result = Some(format!("✓ 已设置静态 IP {ip}/{mask} 网关 {}", if gw.is_empty() { "无" } else { &gw }));
-            self.ip_form.active = false;
+            let suffix = if dns2.is_empty() {
+                String::new()
+            } else {
+                format!(" / {dns2}")
+            };
+            self.quick_set.result = Some(format!("✓ 已设置 IPv6 DNS {dns1}{suffix}"));
+            self.quick_set.editing = false;
         } else {
-            self.quick_set.result = Some(format!("✗ {}", o.combined()));
+            let gw = self.quick_set.ipv4_fields[0].clone();
+            let mask = self.quick_set.ipv4_fields[1].clone();
+            let ip = self.quick_set.ipv4_fields[2].clone();
+            let dns1 = self.quick_set.ipv4_fields[3].clone();
+            let dns2 = self.quick_set.ipv4_fields[4].clone();
+            if ip.is_empty() || mask.is_empty() {
+                self.quick_set.result = Some("✗ 请至少填写 IP 地址和子网掩码".into());
+                return;
+            }
+            let _ = net_set::backup_network(&crate::config::app_root());
+            let o =
+                net_set::set_static_ip(&iface, &ip, &mask, if gw.is_empty() { "" } else { &gw });
+            if o.success {
+                if !dns1.is_empty() {
+                    let _ = net_set::set_dns(&iface, &dns1);
+                }
+                if !dns2.is_empty() {
+                    let _ = net_set::add_dns(&iface, &dns2);
+                }
+                self.quick_set.result = Some(format!(
+                    "✓ 已设置静态 IP {ip}/{mask} 网关 {}",
+                    if gw.is_empty() { "无" } else { &gw }
+                ));
+                self.quick_set.editing = false;
+            } else {
+                self.quick_set.result = Some(format!("✗ {}", o.combined()));
+            }
         }
     }
 
@@ -841,13 +1194,23 @@ impl App {
                                 || looks.contains("password")
                                 || looks.is_empty()
                             {
+                                // 连后识别厂商型号（V3.0 P5）
+                                let detected = serial::detect_vendor(&mut sess);
                                 // 打开持久会话
                                 if let Ok(port) = serialport::new(&p.name, baud)
                                     .timeout(Duration::from_millis(200))
                                     .open()
                                 {
                                     let arc = std::sync::Arc::new(std::sync::Mutex::new(port));
-                                    let _ = tx.send(TermEvent::Connected(arc.clone()));
+                                    let (vendor, model) = match detected {
+                                        Some((v, m)) => (Some(v), Some(m)),
+                                        None => (None, None),
+                                    };
+                                    let _ = tx.send(TermEvent::Connected {
+                                        sess: arc.clone(),
+                                        vendor,
+                                        model,
+                                    });
                                     // 后台读线程
                                     let rx_tx = tx.clone();
                                     std::thread::spawn(move || {
@@ -867,7 +1230,8 @@ impl App {
                                                 std::thread::sleep(Duration::from_millis(50));
                                                 continue;
                                             }
-                                            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                                            let text =
+                                                String::from_utf8_lossy(&buf[..n]).to_string();
                                             if rx_tx.send(TermEvent::Echo(text)).is_err() {
                                                 break;
                                             }
@@ -898,10 +1262,29 @@ impl App {
                         self.term.output.drain(..excess);
                     }
                 }
-                TermEvent::Connected(sess) => {
+                TermEvent::Connected {
+                    sess,
+                    vendor,
+                    model,
+                } => {
                     self.session = Some(sess);
                     self.term.conn = ConnState::Connected;
-                    self.term.status = Some("已连接，回车 / I 输入命令，↑/↓ 选模板".into());
+                    self.term.detected_vendor = vendor.clone();
+                    self.term.detected_model = model.clone();
+                    if let Some(v) = &vendor {
+                        // 自动切 CLI 到识别厂商
+                        if let Some(idx) =
+                            self.vendor_db.vendors().iter().position(|x| &x.vendor == v)
+                        {
+                            self.term.vendor_idx = idx;
+                            self.term.cmd_idx = 0;
+                        }
+                        let model_txt = model.clone().unwrap_or_else(|| "未知型号".to_string());
+                        self.term.status = Some(format!("已连接，自动识别为 {v}（{model_txt}）"));
+                    } else {
+                        self.term.status =
+                            Some("已连接，未能识别型号，请用 [ / ] 手动选择厂商".into());
+                    }
                 }
                 TermEvent::Failed(msg) => {
                     self.term.conn = ConnState::Disconnected;
@@ -971,19 +1354,184 @@ impl App {
         }
     }
 
+    /// 模块四：三级导航（↑/↓）。
+    fn topo_nav(&mut self, delta: i64) {
+        match self.topo.mode {
+            TopoMode::List => {
+                let n = self.topo.entries.len();
+                if n > 0 {
+                    let cur = self.topo.selected as i64;
+                    self.topo.selected = ((cur + delta + n as i64) % n as i64) as usize;
+                }
+            }
+            TopoMode::Menu => {
+                let n = TOPO_MENU.len();
+                let cur = self.topo.menu_idx as i64;
+                self.topo.menu_idx = ((cur + delta + n as i64) % n as i64) as usize;
+            }
+            TopoMode::Detail => {
+                if let Some(e) = self.topo.current() {
+                    let n = e.topology.devices.len();
+                    if n > 0 {
+                        let cur = self.topo.dev_idx as i64;
+                        self.topo.dev_idx = ((cur + delta + n as i64) % n as i64) as usize;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 模块四：Enter 键（按层级分发）。
+    fn topo_enter(&mut self) {
+        match self.topo.mode {
+            TopoMode::List => {
+                if !self.topo.entries.is_empty() {
+                    self.topo.mode = TopoMode::Menu;
+                    self.topo.menu_idx = 0;
+                }
+            }
+            TopoMode::Menu => {
+                let idx = self.topo.menu_idx;
+                self.topo_menu_action(idx);
+            }
+            TopoMode::Detail => self.topo_gen_cli(),
+        }
+    }
+
+    /// 模块四：执行二级菜单动作。
+    fn topo_menu_action(&mut self, idx: usize) {
+        match idx {
+            0 => {
+                self.topo.mode = TopoMode::Detail;
+                self.topo.dev_idx = 0;
+            }
+            1 => self.topo_rename(),
+            2 => self.topo_copy(),
+            3 => self.topo_export_d2(),
+            4 => self.topo_delete(),
+            _ => {}
+        }
+    }
+
+    /// 新建拓扑（demo 骨架）。
+    fn topo_new(&mut self) {
+        let name = format!("拓扑{}", self.topo.entries.len() + 1);
+        let t = topology::demo_topology();
+        let findings = self.check_topo(&t);
+        self.topo.entries.push(TopoEntry {
+            name,
+            topology: t,
+            findings,
+        });
+        self.topo.selected = self.topo.entries.len() - 1;
+        self.topo.status = Some("已新建拓扑（O 打开编辑器编辑）".into());
+    }
+
+    /// 导入 topology.json 为新的拓扑条目。
+    fn topo_import(&mut self) {
+        let json_path = crate::config::app_root().join("topology.json");
+        match std::fs::read_to_string(&json_path) {
+            Ok(s) => match serde_json::from_str::<Topology>(&s) {
+                Ok(t) => {
+                    let name = format!("导入拓扑{}", self.topo.entries.len() + 1);
+                    let findings = self.check_topo(&t);
+                    self.topo.entries.push(TopoEntry {
+                        name,
+                        topology: t,
+                        findings,
+                    });
+                    self.topo.selected = self.topo.entries.len() - 1;
+                    self.topo.status = Some("已导入 topology.json".into());
+                }
+                Err(e) => self.topo.status = Some(format!("解析失败: {e}")),
+            },
+            Err(_) => self.topo.status = Some("未找到 topology.json（先 O 打开编辑器导出）".into()),
+        }
+    }
+
+    /// 重命名当前拓扑（简化：加后缀；完整重命名在编辑器）。
+    fn topo_rename(&mut self) {
+        if let Some(e) = self.topo.current_mut() {
+            let old = e.name.clone();
+            e.name = format!("{old}·改");
+            self.topo.status = Some(format!("已重命名「{old}」→「{}」", e.name));
+        }
+    }
+
+    /// 复制当前拓扑。
+    fn topo_copy(&mut self) {
+        if let Some(e) = self.topo.current() {
+            let copy = TopoEntry {
+                name: format!("{} 副本", e.name),
+                topology: e.topology.clone(),
+                findings: e.findings.clone(),
+            };
+            self.topo.entries.push(copy);
+            self.topo.selected = self.topo.entries.len() - 1;
+            self.topo.status = Some("已复制拓扑".into());
+        }
+    }
+
+    /// 删除当前拓扑（至少保留一个）。
+    fn topo_delete(&mut self) {
+        if self.topo.entries.len() <= 1 {
+            self.topo.status = Some("至少保留一个拓扑".into());
+            return;
+        }
+        let name = self
+            .topo
+            .current()
+            .map(|e| e.name.clone())
+            .unwrap_or_default();
+        self.topo.entries.remove(self.topo.selected);
+        if self.topo.selected >= self.topo.entries.len() {
+            self.topo.selected = self.topo.entries.len().saturating_sub(1);
+        }
+        self.topo.mode = TopoMode::List;
+        self.topo.status = Some(format!("已删除「{name}」"));
+    }
+
+    /// 预检辅助：对拓扑跑 design_check。
+    fn check_topo(&self, t: &Topology) -> Vec<design_check::Finding> {
+        design_check::check(
+            t,
+            &[
+                design_check::Intent::UniqueSubnet,
+                design_check::Intent::VlanPropagated {
+                    vlan: 10,
+                    to: DeviceRole::Access,
+                },
+                design_check::Intent::VlanPropagated {
+                    vlan: 20,
+                    to: DeviceRole::Access,
+                },
+                design_check::Intent::RedundantUplink {
+                    role: DeviceRole::Access,
+                },
+                design_check::Intent::NoLoop,
+            ],
+        )
+    }
+
     /// 模块四：生成选中设备的 CLI。
     fn topo_gen_cli(&mut self) {
-        let Some(d) = self.topo.topology.devices.get(self.topo.selected) else {
+        let Some(e) = self.topo.current() else {
             return;
         };
-        let cli = topo_cli::generate_device_cli(d, &self.topo.topology);
+        let Some(d) = e.topology.devices.get(self.topo.dev_idx) else {
+            return;
+        };
+        let cli = topo_cli::generate_device_cli(d, &e.topology);
         self.topo.status = Some(format!("已生成 {} 的 CLI", d.name));
         self.topo.cli = Some(cli);
     }
 
     /// 模块四：导出 D2 并尝试渲染 SVG。
     fn topo_export_d2(&mut self) {
-        let d2 = self.topo.topology.export_d2();
+        let Some(e) = self.topo.current() else {
+            return;
+        };
+        let d2 = e.topology.export_d2();
         let root = crate::config::app_root();
         let d2_path = root.join("topology.d2");
         match std::fs::write(&d2_path, &d2) {
@@ -1039,41 +1587,37 @@ impl App {
 
     /// 模块四：打开外部拓扑编辑器（导出 topology.json + 启动 pywebview 窗口）。
     fn topo_open_editor(&mut self) {
+        let Some(e) = self.topo.current() else {
+            return;
+        };
         let root = crate::config::app_root();
         let json_path = root.join("topology.json");
-        let json = serde_json::to_string_pretty(&self.topo.topology).unwrap_or_default();
+        let json = serde_json::to_string_pretty(&e.topology).unwrap_or_default();
         if std::fs::write(&json_path, &json).is_err() {
             self.topo.status = Some("写入 topology.json 失败".into());
             return;
         }
         let editor_py = root.join("editor").join("editor.py");
-        // 后台启动（webview 阻塞，不等待）
         let _ = std::process::Command::new("python")
             .arg(editor_py.to_str().unwrap_or("editor.py"))
             .arg(json_path.to_str().unwrap_or("topology.json"))
             .spawn();
-        self.topo.status = Some("已启动拓扑编辑器（需 pip install pywebview），编辑后按 B 回读".into());
+        self.topo.status =
+            Some("已启动拓扑编辑器（需 pip install pywebview），编辑后按 B 回读".into());
     }
 
-    /// 模块四：回读 topology.json（重新预检 + CLI 推导）。
+    /// 模块四：回读 topology.json（更新当前拓扑 + 重新预检）。
     fn topo_load_json(&mut self) {
-        let root = crate::config::app_root();
-        let json_path = root.join("topology.json");
+        let json_path = crate::config::app_root().join("topology.json");
         match std::fs::read_to_string(&json_path) {
             Ok(s) => match serde_json::from_str::<Topology>(&s) {
                 Ok(t) => {
-                    self.topo.topology = t;
-                    self.topo.findings = design_check::check(
-                        &self.topo.topology,
-                        &[
-                            design_check::Intent::UniqueSubnet,
-                            design_check::Intent::VlanPropagated { vlan: 10, to: DeviceRole::Access },
-                            design_check::Intent::VlanPropagated { vlan: 20, to: DeviceRole::Access },
-                            design_check::Intent::RedundantUplink { role: DeviceRole::Access },
-                            design_check::Intent::NoLoop,
-                        ],
-                    );
-                    self.topo.selected = 0;
+                    let findings = self.check_topo(&t);
+                    if let Some(e) = self.topo.current_mut() {
+                        e.topology = t;
+                        e.findings = findings;
+                    }
+                    self.topo.dev_idx = 0;
                     self.topo.cli = None;
                     self.topo.status = Some("已回读 topology.json 并重新预检".into());
                 }
@@ -1089,7 +1633,8 @@ impl App {
             self.diag.summary = Some("请先运行诊断".into());
             return;
         }
-        let results: Vec<CheckResult> = self.diag.results.iter().filter_map(|r| r.clone()).collect();
+        let results: Vec<CheckResult> =
+            self.diag.results.iter().filter_map(|r| r.clone()).collect();
         let summary = self.diag.summary.clone().unwrap_or_default();
         let md = crate::core::report::diag_report_md(&results, &summary, &[]);
         let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
@@ -1103,7 +1648,9 @@ impl App {
     /// 诊断实时化：路由追踪到公网（异步，结果追加到日志）。
     fn trace_route(&mut self) {
         let tx = self.tx.clone();
-        self.diag.logs.push("路由追踪：tracert 223.5.5.5（最多 8 跳）…".into());
+        self.diag
+            .logs
+            .push("路由追踪：tracert 223.5.5.5（最多 8 跳）…".into());
         self.rt.spawn(async move {
             let hops = crate::core::net_diag::traceroute("223.5.5.5").await;
             for h in hops {
@@ -1112,37 +1659,99 @@ impl App {
         });
     }
 
-    /// 诊断→修复闭环：执行所有「自动修复」项。
-    fn execute_auto_fixes(&mut self) {
-        let fixes: Vec<String> = self
+    /// 诊断→修复闭环：仅修复选中项（V3.0 分层）。
+    fn execute_auto_fix_one(&mut self, index: usize) {
+        let Some(r) = self.diag.results.get(index).and_then(|r| r.as_ref()) else {
+            return;
+        };
+        let Some(cmd) = r.fix.as_ref().and_then(|f| match &f.kind {
+            crate::core::net_diag::FixKind::Auto(cmd) => Some(cmd.clone()),
+            _ => None,
+        }) else {
+            self.diag.summary = Some(format!("「{}」无可自动修复项", r.name));
+            return;
+        };
+        let out = crate::windows::run("cmd", &["/c", &cmd], std::time::Duration::from_secs(30));
+        self.diag.logs.push(format!("执行：{cmd}"));
+        if out.success {
+            self.diag.summary = Some(format!("已修复「{}」", r.name));
+        } else {
+            let first = out.combined().lines().next().unwrap_or("失败").to_string();
+            self.diag.logs.push(format!("  ✗ {first}"));
+            self.diag.summary = Some(format!("修复「{}」失败", r.name));
+        }
+    }
+
+    /// 当前选中项的子动作数量。
+    fn drill_count(&self) -> usize {
+        self.diag
+            .results
+            .get(self.diag.selected)
+            .and_then(|r| r.as_ref())
+            .map(|r| r.drill.len())
+            .unwrap_or(0)
+    }
+
+    /// 执行下钻面板选中的子动作。
+    fn execute_drill(&mut self) {
+        let Some(action) = self
             .diag
             .results
-            .iter()
-            .filter_map(|r| r.as_ref())
-            .filter_map(|r| r.fix.as_ref())
-            .filter_map(|f| match &f.kind {
-                crate::core::net_diag::FixKind::Auto(cmd) => Some(cmd.clone()),
-                _ => None,
-            })
-            .collect();
-
-        if fixes.is_empty() {
-            self.diag.summary = Some("无可自动修复项".into());
+            .get(self.diag.selected)
+            .and_then(|r| r.as_ref())
+            .and_then(|r| r.drill.get(self.diag.drill_selected))
+            .copied()
+        else {
+            self.diag.drill_open = false;
             return;
-        }
-
-        let mut done = 0;
-        for cmd in fixes {
-            let out = crate::windows::run("cmd", &["/c", &cmd], std::time::Duration::from_secs(30));
-            self.diag.logs.push(format!("执行：{cmd}"));
-            if out.success {
-                done += 1;
-            } else {
-                let first = out.combined().lines().next().unwrap_or("失败").to_string();
-                self.diag.logs.push(format!("  ✗ {first}"));
+        };
+        use crate::core::net_diag::DrillAction;
+        match action {
+            DrillAction::Fix => {
+                let idx = self.diag.selected;
+                self.execute_auto_fix_one(idx);
+                self.diag.drill_open = false;
+            }
+            DrillAction::TraceRoute => {
+                self.diag.drill_open = false;
+                self.trace_route();
+            }
+            DrillAction::DnsSpeedTest => {
+                self.diag.drill_open = false;
+                self.start_dns_speed_test();
+            }
+            DrillAction::DnsOptimize => {
+                self.diag.drill_open = false;
+                self.tab = 1;
+                self.quick_set.result = None;
+                self.execute_quick(QuickAction::DnsOptimize);
             }
         }
-        self.diag.summary = Some(format!("已执行 {done} 项自动修复"));
+    }
+
+    /// DNS 测速（下钻动作）：测当前 DNS 各服务器延迟，追加到日志。
+    fn start_dns_speed_test(&mut self) {
+        let dns_list = self.current_dns.clone();
+        if dns_list.is_empty() {
+            self.diag.summary = Some("未获取到当前 DNS".into());
+            return;
+        }
+        self.diag
+            .logs
+            .push(format!("DNS 测速：{}", dns_list.join("、")));
+        let tx = self.tx.clone();
+        self.rt.spawn(async move {
+            for d in dns_list {
+                match dns::ping_latency(&d).await {
+                    Some(ms) => {
+                        let _ = tx.send(DiagEvent::Log(format!("  {d} → {ms}ms")));
+                    }
+                    None => {
+                        let _ = tx.send(DiagEvent::Log(format!("  {d} → 超时")));
+                    }
+                }
+            }
+        });
     }
 
     /// 启动诊断（后台重新探测 + 异步执行，事件经 mpsc 回传）。

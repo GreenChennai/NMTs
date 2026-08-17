@@ -1,11 +1,8 @@
 name: build
 
+# V3.0 起仅手动触发：推送代码 / 打 tag 不再自动构建、不再自动发行版本。
+# 需要构建时在仓库 Actions 页手动「Run workflow」。
 on:
-  push:
-    branches: [master, main]
-    tags: ["v*"]
-  pull_request:
-    branches: [master, main]
   workflow_dispatch:
 
 env:

@@ -35,7 +35,7 @@ impl Vendor {
     }
 }
 
-/// 设备角色。
+/// 设备角色（V3.0 扩展：新增服务器/电脑/手机/AC/AP，`Unknown` 兼容旧 .nmts）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeviceRole {
     Core,
@@ -43,6 +43,13 @@ pub enum DeviceRole {
     Access,
     Router,
     Firewall,
+    Server,
+    PC,
+    Phone,
+    AC,
+    AP,
+    #[serde(other)]
+    Unknown,
 }
 
 impl DeviceRole {
@@ -53,6 +60,24 @@ impl DeviceRole {
             DeviceRole::Access => "接入",
             DeviceRole::Router => "路由器",
             DeviceRole::Firewall => "防火墙",
+            DeviceRole::Server => "服务器",
+            DeviceRole::PC => "用户电脑",
+            DeviceRole::Phone => "用户手机",
+            DeviceRole::AC => "AC 控制器",
+            DeviceRole::AP => "AP 接入点",
+            DeviceRole::Unknown => "未知",
+        }
+    }
+
+    /// D2 渲染形状。
+    pub fn d2_shape(&self) -> &'static str {
+        match self {
+            DeviceRole::Router | DeviceRole::Firewall => "hexagon",
+            DeviceRole::Server => "cylinder",
+            DeviceRole::PC | DeviceRole::Phone => "rectangle",
+            DeviceRole::AP => "circle",
+            DeviceRole::AC => "diamond",
+            _ => "rectangle",
         }
     }
 }
@@ -163,6 +188,12 @@ pub struct Link {
     pub from_port: String,
     #[serde(default)]
     pub to_port: String,
+    /// 接口 IP（形如 `192.168.1.1/24`，编辑器端口编辑用）。
+    #[serde(default)]
+    pub from_ip: String,
+    /// 对端接口 IP。
+    #[serde(default)]
+    pub to_ip: String,
 }
 
 /// 拓扑。
@@ -215,17 +246,28 @@ impl Topology {
         out.push_str("# NMTs 拓扑（由 NMTs 生成）\n");
         out.push_str("direction: right\n\n");
         for d in &self.devices {
-            let shape = match d.role {
-                DeviceRole::Router | DeviceRole::Firewall => "hexagon",
-                _ => "rectangle",
-            };
+            let shape = d.role.d2_shape();
             out.push_str(&format!(
                 "{}: {} {{\n  shape: {}\n  style.fill: \"#E8F4FD\"\n}}\n",
                 d.id, d.name, shape
             ));
         }
         for l in &self.links {
-            out.push_str(&format!("{} -> {}\n", l.from, l.to));
+            let mut label = String::new();
+            if !l.from_port.is_empty() || !l.to_port.is_empty() {
+                label.push_str(&format!("{} ↔ {}", l.from_port, l.to_port));
+            }
+            if !l.from_ip.is_empty() {
+                label.push_str(&format!("  {}", l.from_ip));
+            }
+            if !l.to_ip.is_empty() {
+                label.push_str(&format!(" / {}", l.to_ip));
+            }
+            if label.is_empty() {
+                out.push_str(&format!("{} -> {}\n", l.from, l.to));
+            } else {
+                out.push_str(&format!("{} -> {}: {}\n", l.from, l.to, label));
+            }
         }
         out
     }
@@ -243,13 +285,29 @@ pub fn demo_topology() -> Topology {
         config: DeviceConfig {
             hostname: "CORE".into(),
             vlans: vec![
-                Vlan { id: 10, name: "业务".into(), purpose: "办公".into() },
-                Vlan { id: 20, name: "访客".into(), purpose: "Guest".into() },
+                Vlan {
+                    id: 10,
+                    name: "业务".into(),
+                    purpose: "办公".into(),
+                },
+                Vlan {
+                    id: 20,
+                    name: "访客".into(),
+                    purpose: "Guest".into(),
+                },
             ],
             trunk_vlans: vec![10, 20],
             l3_intfs: vec![
-                L3Intf { name: "Vlanif10".into(), subnet: "192.168.10.0/24".into(), vrrp: true },
-                L3Intf { name: "Vlanif20".into(), subnet: "192.168.20.0/24".into(), vrrp: true },
+                L3Intf {
+                    name: "Vlanif10".into(),
+                    subnet: "192.168.10.0/24".into(),
+                    vrrp: true,
+                },
+                L3Intf {
+                    name: "Vlanif20".into(),
+                    subnet: "192.168.20.0/24".into(),
+                    vrrp: true,
+                },
             ],
             routing: RoutingProtocol::Static,
             stp_enabled: true,
@@ -267,7 +325,11 @@ pub fn demo_topology() -> Topology {
         config: DeviceConfig {
             hostname: "DIST".into(),
             trunk_vlans: vec![10],
-            l3_intfs: vec![L3Intf { name: "Vlanif10".into(), subnet: "192.168.10.0/24".into(), vrrp: true }],
+            l3_intfs: vec![L3Intf {
+                name: "Vlanif10".into(),
+                subnet: "192.168.10.0/24".into(),
+                vrrp: true,
+            }],
             stp_enabled: true,
             mtu: Some(1500),
             ..Default::default()
@@ -280,7 +342,12 @@ pub fn demo_topology() -> Topology {
         role: DeviceRole::Access,
         mgmt_ip: "10.0.0.11".into(),
         creds: None,
-        config: DeviceConfig { hostname: "ACC1".into(), access_vlan: Some(10), stp_enabled: true, ..Default::default() },
+        config: DeviceConfig {
+            hostname: "ACC1".into(),
+            access_vlan: Some(10),
+            stp_enabled: true,
+            ..Default::default()
+        },
     };
     let acc2 = Device {
         id: "acc2".into(),
@@ -289,7 +356,12 @@ pub fn demo_topology() -> Topology {
         role: DeviceRole::Access,
         mgmt_ip: "10.0.0.12".into(),
         creds: None,
-        config: DeviceConfig { hostname: "ACC2".into(), access_vlan: Some(20), stp_enabled: false, ..Default::default() },
+        config: DeviceConfig {
+            hostname: "ACC2".into(),
+            access_vlan: Some(20),
+            stp_enabled: false,
+            ..Default::default()
+        },
     };
     let router = Device {
         id: "r1".into(),
@@ -297,10 +369,18 @@ pub fn demo_topology() -> Topology {
         vendor: Vendor::CiscoIos,
         role: DeviceRole::Router,
         mgmt_ip: "10.0.0.254".into(),
-        creds: Some(Credentials { username: "admin".into(), password: "".into(), protocol: "ssh".into() }),
+        creds: Some(Credentials {
+            username: "admin".into(),
+            password: "".into(),
+            protocol: "ssh".into(),
+        }),
         config: DeviceConfig {
             hostname: "R1".into(),
-            l3_intfs: vec![L3Intf { name: "GigabitEthernet0/0".into(), subnet: "203.0.113.0/30".into(), vrrp: false }],
+            l3_intfs: vec![L3Intf {
+                name: "GigabitEthernet0/0".into(),
+                subnet: "203.0.113.0/30".into(),
+                vrrp: false,
+            }],
             routing: RoutingProtocol::Static,
             ..Default::default()
         },
@@ -309,10 +389,38 @@ pub fn demo_topology() -> Topology {
     Topology {
         devices: vec![core, dist, acc1, acc2, router],
         links: vec![
-            Link { from: "core".into(), to: "dist".into(), from_port: "GE0/0/1".into(), to_port: "GE0/0/1".into() },
-            Link { from: "dist".into(), to: "acc1".into(), from_port: "GE0/0/2".into(), to_port: "GE0/0/1".into() },
-            Link { from: "dist".into(), to: "acc2".into(), from_port: "GE0/0/3".into(), to_port: "Gi0/1".into() },
-            Link { from: "core".into(), to: "r1".into(), from_port: "GE0/0/24".into(), to_port: "Gi0/0".into() },
+            Link {
+                from: "core".into(),
+                to: "dist".into(),
+                from_port: "GE0/0/1".into(),
+                to_port: "GE0/0/1".into(),
+                from_ip: String::new(),
+                to_ip: String::new(),
+            },
+            Link {
+                from: "dist".into(),
+                to: "acc1".into(),
+                from_port: "GE0/0/2".into(),
+                to_port: "GE0/0/1".into(),
+                from_ip: String::new(),
+                to_ip: String::new(),
+            },
+            Link {
+                from: "dist".into(),
+                to: "acc2".into(),
+                from_port: "GE0/0/3".into(),
+                to_port: "Gi0/1".into(),
+                from_ip: String::new(),
+                to_ip: String::new(),
+            },
+            Link {
+                from: "core".into(),
+                to: "r1".into(),
+                from_port: "GE0/0/24".into(),
+                to_port: "Gi0/0".into(),
+                from_ip: String::new(),
+                to_ip: String::new(),
+            },
         ],
     }
 }
@@ -333,7 +441,11 @@ mod tests {
                     creds: None,
                     config: DeviceConfig {
                         hostname: "CORE".into(),
-                        vlans: vec![Vlan { id: 10, name: "业务".into(), purpose: String::new() }],
+                        vlans: vec![Vlan {
+                            id: 10,
+                            name: "业务".into(),
+                            purpose: String::new(),
+                        }],
                         trunk_vlans: vec![10],
                         ..Default::default()
                     },
@@ -357,6 +469,8 @@ mod tests {
                 to: "acc1".into(),
                 from_port: "GE0/0/1".into(),
                 to_port: "GE0/0/1".into(),
+                from_ip: String::new(),
+                to_ip: String::new(),
             }],
         }
     }

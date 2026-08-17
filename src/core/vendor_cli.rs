@@ -136,7 +136,10 @@ mod tests {
     fn render_placeholder() {
         let s = render_command(
             "ip address {ip} {mask}",
-            &[("ip", "192.168.1.1".into()), ("mask", "255.255.255.0".into())],
+            &[
+                ("ip", "192.168.1.1".into()),
+                ("mask", "255.255.255.0".into()),
+            ],
         );
         assert_eq!(s, "ip address 192.168.1.1 255.255.255.0");
     }
@@ -147,7 +150,11 @@ mod tests {
         let c = db.get("cisco_ios").unwrap();
         assert_ne!(
             c.command("save_config").unwrap().command,
-            db.get("huawei_vrp").unwrap().command("save_config").unwrap().command
+            db.get("huawei_vrp")
+                .unwrap()
+                .command("save_config")
+                .unwrap()
+                .command
         );
     }
 }

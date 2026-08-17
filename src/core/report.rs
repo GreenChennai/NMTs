@@ -81,8 +81,13 @@ mod tests {
             layer: Layer::Basic,
             status,
             detail: "d".into(),
-            fix: Some(Fix { kind: FixKind::Manual("m".into()), label: "建议".into() }),
+            fix: Some(Fix {
+                kind: FixKind::Manual("m".into()),
+                label: "建议".into(),
+            }),
             scope: None,
+            current: None,
+            drill: Vec::new(),
         }
     }
 

@@ -9,7 +9,7 @@ log_keep_days: 7              # 日志保留天数
 # DNS 优选（数据源：vendor_db/dns_providers.yaml）
 dns_preference:
   categories: ["default", "family", "secure"]   # 候选类别
-  prefer_ipv: "ipv4"            # ipv4 | ipv6 | both
+  prefer_ipv: "both"            # ipv4 | ipv6 | both（运行时若无 IPv6 自动回落 ipv4）
   prefer_country: "CN"          # 优先同国家/地区提供商（Geo 就近）
   test:
     probe_domain: "www.baidu.com"   # 测速解析的域名（国内优先）

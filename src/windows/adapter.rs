@@ -10,9 +10,23 @@ use super::powershell;
 
 /// 虚拟网卡识别关键词（描述 / 接口名包含其一即视为虚拟网卡）。
 const VIRTUAL_KEYWORDS: &[&str] = &[
-    "virtual", "vpn", "hyper-v", "vethernet", "vmware", "virtualbox", "wsl",
-    "tailscale", "zerotier", "loopback", "tap", "tun", "docker", "容器",
-    "虚拟", "隧道", "环回",
+    "virtual",
+    "vpn",
+    "hyper-v",
+    "vethernet",
+    "vmware",
+    "virtualbox",
+    "wsl",
+    "tailscale",
+    "zerotier",
+    "loopback",
+    "tap",
+    "tun",
+    "docker",
+    "容器",
+    "虚拟",
+    "隧道",
+    "环回",
 ];
 
 /// 网卡信息。
@@ -38,7 +52,11 @@ impl Adapter {
         if !self.hardware_interface {
             return true;
         }
-        let hay = format!("{} {}", self.name.to_lowercase(), self.description.to_lowercase());
+        let hay = format!(
+            "{} {}",
+            self.name.to_lowercase(),
+            self.description.to_lowercase()
+        );
         VIRTUAL_KEYWORDS.iter().any(|k| hay.contains(k))
     }
 
@@ -49,7 +67,11 @@ impl Adapter {
 
     /// 网卡类型徽标（物理 / 虚拟 / VPN）。
     pub fn kind_label(&self) -> &'static str {
-        let hay = format!("{} {}", self.name.to_lowercase(), self.description.to_lowercase());
+        let hay = format!(
+            "{} {}",
+            self.name.to_lowercase(),
+            self.description.to_lowercase()
+        );
         if hay.contains("vpn") || hay.contains("隧道") {
             "VPN"
         } else if self.is_virtual() {
@@ -89,7 +111,9 @@ pub fn list_adapters() -> Vec<Adapter> {
 /// 判定「当前上网网卡」：取默认路由接口（多默认路由取跃点最低者）。
 pub fn get_active_adapter() -> Option<Adapter> {
     let route = get_default_route()?;
-    list_adapters().into_iter().find(|a| a.interface_index == route.interface_index)
+    list_adapters()
+        .into_iter()
+        .find(|a| a.interface_index == route.interface_index)
 }
 
 /// 公开接口：返回默认路由下一跳 IP（供诊断使用）。
@@ -129,9 +153,10 @@ fn parse_adapters(json: &str) -> Vec<Adapter> {
             .iter()
             .filter_map(|v| serde_json::from_value::<Adapter>(v.clone()).ok())
             .collect(),
-        serde_json::Value::Object(_) => {
-            serde_json::from_value::<Adapter>(value).ok().into_iter().collect()
-        }
+        serde_json::Value::Object(_) => serde_json::from_value::<Adapter>(value)
+            .ok()
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -166,7 +191,8 @@ mod tests {
     fn parse_single_or_array() {
         let single = r#"{"InterfaceIndex":12,"Name":"以太网"}"#;
         assert_eq!(parse_adapters(single).len(), 1);
-        let arr = r#"[{"InterfaceIndex":12,"Name":"以太网"},{"InterfaceIndex":1,"Name":"Loopback"}]"#;
+        let arr =
+            r#"[{"InterfaceIndex":12,"Name":"以太网"},{"InterfaceIndex":1,"Name":"Loopback"}]"#;
         assert_eq!(parse_adapters(arr).len(), 2);
     }
 }

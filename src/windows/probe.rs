@@ -29,6 +29,8 @@ pub struct NetProbe {
     pub dns_ok: bool,
     /// IPv6 是否启用（注册表 DisabledComponents == 0）。
     pub ipv6_enabled: bool,
+    /// 当前上网网卡的 MAC 地址（模块二只读展示）。
+    pub mac: String,
     /// 有异常状态的网络类 PnP 设备（驱动缺失/错误）。
     pub problem_devices: Vec<String>,
     /// Windows Defender 检测到的威胁数。
@@ -63,6 +65,7 @@ $bad=@(Get-PnpDevice -Class Net -PresentOnly | Where-Object {$_.Status -eq 'Erro
 $threat=@(Get-MpThreat | Select-Object -ExpandProperty ThreatName);
 $dnsok=[bool](Resolve-DnsName 'www.baidu.com' -DnsOnly -ErrorAction SilentlyContinue | Select-Object -First 1);
 $ipv6d=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters' -Name DisabledComponents -ErrorAction SilentlyContinue).DisabledComponents;
+$mac=(Get-NetAdapter -InterfaceIndex $idx).MacAddress;
 [PSCustomObject]@{
   admin=[bool]$admin;
   adapters=@($adapters);
@@ -80,6 +83,7 @@ $ipv6d=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Paramet
   winhttp_proxy=$wh;
   dns_ok=[bool]$dnsok;
   ipv6_enabled=([int]$ipv6d -eq 0);
+  mac=[string]$mac;
   problem_devices=@($bad);
   threat_count=@($threat).Count;
 } | ConvertTo-Json -Compress -Depth 4
@@ -105,32 +109,71 @@ fn parse_probe(json: &str) -> Option<NetProbe> {
     let dns = v
         .get("dns")
         .and_then(|x| x.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let problem_devices = v
         .get("problem_devices")
         .and_then(|x| x.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     Some(NetProbe {
         is_admin: v.get("admin").and_then(|x| x.as_bool()).unwrap_or(false),
         adapters,
         active_index: v.get("active_index").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        next_hop: v.get("next_hop").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        ip: v.get("ip").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        next_hop: v
+            .get("next_hop")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        ip: v
+            .get("ip")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
         prefix_len: v.get("prefix").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        gateway: v.get("gateway").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        gateway: v
+            .get("gateway")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
         dns,
         dhcp_enabled: v.get("dhcp").and_then(|x| x.as_bool()).unwrap_or(false),
         mtu: v.get("mtu").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
         route_count: v.get("route_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        ie_proxy_enabled: v.get("ie_proxy_enabled").and_then(|x| x.as_bool()).unwrap_or(false),
-        ie_proxy_server: v.get("ie_proxy_server").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        winhttp_proxy: v.get("winhttp_proxy").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        ie_proxy_enabled: v
+            .get("ie_proxy_enabled")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        ie_proxy_server: v
+            .get("ie_proxy_server")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        winhttp_proxy: v
+            .get("winhttp_proxy")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
         dns_ok: v.get("dns_ok").and_then(|x| x.as_bool()).unwrap_or(false),
-        ipv6_enabled: v.get("ipv6_enabled").and_then(|x| x.as_bool()).unwrap_or(false),
+        ipv6_enabled: v
+            .get("ipv6_enabled")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        mac: v
+            .get("mac")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
         problem_devices,
         threat_count: v.get("threat_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
     })

@@ -2,7 +2,7 @@
   <h1 align="center">NMTs · 网络维护工具集</h1>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.0-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.0.0-orange.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/lang-Rust-DEA584.svg" alt="Language">
   <img src="https://img.shields.io/badge/UI-ratatui%20%2B%20crossterm-4D4D4D.svg" alt="UI">
@@ -44,6 +44,18 @@
 | v1.7.0 | 多网卡深化 + EventBus + 诊断实时化 | ✅ 完成 |
 | v1.8.0 | 配置漂移闭环 + 脚本中心 + 帮助引导 | ✅ 完成 |
 | v2.0.0 | 大版本收口：报告导出 + 定时巡检 + 撤销审计 + 跨模块联动 | ✅ 完成 |
+
+### V3.0 迭代（UX 重构：键位分层 + IME 治理 + 诊断钻取 + 结构化面板 + 自动识别 + 拓扑富编辑器）
+
+| 里程碑 | 内容 | 诉求 | 状态 |
+| --- | --- | --- | --- |
+| M1 | 键位解耦 `NavController` + 非输入态禁 IME `ImeGuard` | 1, 2 | ✅ 完成 |
+| M2 | 诊断分层 + 下钻 `DrillPanel` + DNS 双栈优选（IPv6） | 3.1, 3.2 | ✅ 完成 |
+| M3 | 快捷设置统一面板 `SettingsPanel`（IPv4/IPv6/MAC/高级） | 4 | ✅ 完成 |
+| M4 | 网工 通用/eNSP + 连后自动识别型号切 CLI | 5 | ✅ 完成 |
+| M5 | 拓扑多实例 + 三级导航 + 预检常驻 | 6 | ✅ 完成 |
+| M6 | 外置编辑器富功能（10 图标/端口 IP/VLAN 路由/布局/吸附） | 6 | ✅ 完成 |
+| M7 | 收口：跨模块联动 + 回归测试 + 文档 | 全局 | ✅ 完成 |
 
 ## 环境与构建
 

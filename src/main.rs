@@ -50,7 +50,11 @@ fn run_quick_diag() -> Result<()> {
     println!("NMTs 快速诊断");
     println!(
         "管理员权限：{}；当前上网网卡：{}",
-        if diagnoser.ctx.probe.is_admin { "是" } else { "否" },
+        if diagnoser.ctx.probe.is_admin {
+            "是"
+        } else {
+            "否"
+        },
         diagnoser
             .active_adapter()
             .map(|a| a.name.clone())

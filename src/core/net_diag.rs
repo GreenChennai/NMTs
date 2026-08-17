@@ -70,6 +70,30 @@ pub struct Fix {
     pub label: String,
 }
 
+/// 诊断项可触发的子动作（下钻面板按钮，V3.0 原则 P3）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrillAction {
+    /// DNS 测速（就地测速，展示当前 DNS 延迟）。
+    DnsSpeedTest,
+    /// 打开 DNS 优选（跳模块二 / 就地弹测速排名）。
+    DnsOptimize,
+    /// 路由追踪。
+    TraceRoute,
+    /// 单项一键修复（等价于选中项 Auto 修复）。
+    Fix,
+}
+
+impl DrillAction {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DrillAction::DnsSpeedTest => "DNS 测速",
+            DrillAction::DnsOptimize => "DNS 优选",
+            DrillAction::TraceRoute => "路由追踪",
+            DrillAction::Fix => "一键修复",
+        }
+    }
+}
+
 /// 单条检查结果。
 #[derive(Debug, Clone)]
 pub struct CheckResult {
@@ -81,6 +105,26 @@ pub struct CheckResult {
     pub fix: Option<Fix>,
     /// 作用网卡（None 表示全局）。
     pub scope: Option<String>,
+    /// 当前值快照（下钻面板展示，如 `DNS=223.5.5.5/119.29.29.29`）。
+    pub current: Option<String>,
+    /// 可触发的子动作（下钻面板按钮）。
+    pub drill: Vec<DrillAction>,
+}
+
+impl Default for CheckResult {
+    fn default() -> Self {
+        Self {
+            id: "",
+            name: String::new(),
+            layer: Layer::Basic,
+            status: Status::Pending,
+            detail: String::new(),
+            fix: None,
+            scope: None,
+            current: None,
+            drill: Vec::new(),
+        }
+    }
 }
 
 /// 诊断过程中推送的事件。
@@ -115,7 +159,11 @@ const CHECKS: [(&str, &str, Layer); 14] = [
     ("link_status", "物理链路状态", Layer::Local),
     ("mtu", "MTU 设置", Layer::Local),
     // 外部因素层
-    ("wan_connectivity", "外网连通（路由器/光猫）", Layer::External),
+    (
+        "wan_connectivity",
+        "外网连通（路由器/光猫）",
+        Layer::External,
+    ),
     ("threat", "病毒 / 威胁", Layer::External),
     ("loop_risk", "二层环路风险", Layer::External),
     ("mac_lock", "MAC 锁排查", Layer::External),
@@ -162,10 +210,7 @@ impl Diagnoser {
         let wan_ip = "223.5.5.5".to_string();
 
         let _ = tx.send(DiagEvent::Log("并发检测：ping 网关 / ping 公网…".into()));
-        let (gw_ping, wan_ping) = tokio::join!(
-            ping_ok(&gateway),
-            ping_ok(&wan_ip),
-        );
+        let (gw_ping, wan_ping) = tokio::join!(ping_ok(&gateway), ping_ok(&wan_ip),);
         let dyn_results = DynResults {
             gateway_ping: gw_ping,
             wan_ping,
@@ -197,7 +242,7 @@ impl Diagnoser {
         let active = p.active_adapter();
         let scope = active.map(|a| a.name.clone());
 
-        match id {
+        let base = match id {
             "active_adapter" => self.check_active_adapter(layer),
             "dhcp_ip" => self.check_dhcp_ip(layer),
             "default_route" => self.check_default_route(layer),
@@ -220,8 +265,50 @@ impl Diagnoser {
                 detail: String::new(),
                 fix: None,
                 scope,
+                ..Default::default()
             },
+        };
+        self.attach_drill(id, base)
+    }
+
+    /// 注入当前值快照与下钻动作（V3.0 诊断分层 P3）。
+    fn attach_drill(&self, id: &str, mut r: CheckResult) -> CheckResult {
+        let p = &self.ctx.probe;
+        match id {
+            "dns_resolve" => {
+                let dns = if p.dns.is_empty() {
+                    "无".to_string()
+                } else {
+                    p.dns.join("/")
+                };
+                r.current = Some(format!("当前 DNS：{dns}"));
+                r.drill = vec![DrillAction::DnsSpeedTest, DrillAction::DnsOptimize];
+            }
+            "gateway_ping" => {
+                r.current = Some(format!("网关 {}", p.gateway));
+                r.drill = vec![DrillAction::TraceRoute];
+            }
+            "default_route" => {
+                r.current = Some(format!("下一跳 {}", p.next_hop));
+                r.drill = vec![DrillAction::TraceRoute];
+            }
+            "dhcp_ip" => {
+                r.current = Some(format!("IP {} / {}", p.ip, p.prefix_len));
+            }
+            "wan_connectivity" => {
+                r.drill = vec![DrillAction::TraceRoute];
+            }
+            _ => {}
         }
+        // 异常且有 Auto 修复 → 追加「一键修复」子动作
+        if matches!(r.status, Status::Error | Status::Warn) {
+            if let Some(fix) = &r.fix {
+                if matches!(fix.kind, FixKind::Auto(_)) && !r.drill.contains(&DrillAction::Fix) {
+                    r.drill.push(DrillAction::Fix);
+                }
+            }
+        }
+        r
     }
 
     // ---- 基础层 ----
@@ -258,6 +345,7 @@ impl Diagnoser {
                     detail,
                     fix: None,
                     scope: Some(a.name.clone()),
+                    ..Default::default()
                 }
             }
             None => CheckResult {
@@ -271,6 +359,7 @@ impl Diagnoser {
                     label: "需手动：连接网络后重试".into(),
                 }),
                 scope: None,
+                ..Default::default()
             },
         }
     }
@@ -286,6 +375,7 @@ impl Diagnoser {
                 detail: "无当前上网网卡，跳过 IP 配置检测。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             };
         };
         let scope = Some(a.name.clone());
@@ -296,17 +386,32 @@ impl Diagnoser {
                 name: "DHCP / IP 地址配置".into(),
                 layer,
                 status: Status::Error,
-                detail: format!("网卡「{}」地址为 {}(自动专用地址)，说明 DHCP 获取失败。", a.name, p.ip),
+                detail: format!(
+                    "网卡「{}」地址为 {}(自动专用地址)，说明 DHCP 获取失败。",
+                    a.name, p.ip
+                ),
                 fix: Some(Fix {
-                    kind: FixKind::Auto(format!("ipconfig /release \"{}\" && ipconfig /renew \"{}\"", a.name, a.name)),
+                    kind: FixKind::Auto(format!(
+                        "ipconfig /release \"{}\" && ipconfig /renew \"{}\"",
+                        a.name, a.name
+                    )),
                     label: "可自动执行：释放并重新获取 IP".into(),
                 }),
                 scope,
+                ..Default::default()
             };
         }
 
-        let dhcp_txt = if p.dhcp_enabled { "DHCP 自动获取" } else { "静态配置" };
-        let gw_txt = if p.gateway.is_empty() { "无".into() } else { p.gateway.clone() };
+        let dhcp_txt = if p.dhcp_enabled {
+            "DHCP 自动获取"
+        } else {
+            "静态配置"
+        };
+        let gw_txt = if p.gateway.is_empty() {
+            "无".into()
+        } else {
+            p.gateway.clone()
+        };
         let detail = format!(
             "网卡「{}」{}：IP {}，前缀长度 {}，网关 {}。",
             a.name, dhcp_txt, p.ip, p.prefix_len, gw_txt
@@ -315,17 +420,24 @@ impl Diagnoser {
             id: "dhcp_ip",
             name: "DHCP / IP 地址配置".into(),
             layer,
-            status: if p.gateway.is_empty() { Status::Warn } else { Status::Ok },
+            status: if p.gateway.is_empty() {
+                Status::Warn
+            } else {
+                Status::Ok
+            },
             detail,
             fix: if p.gateway.is_empty() {
                 Some(Fix {
-                    kind: FixKind::Manual("确认 DHCP 服务器 / 路由器是否正常，或手动配置网关。".into()),
+                    kind: FixKind::Manual(
+                        "确认 DHCP 服务器 / 路由器是否正常，或手动配置网关。".into(),
+                    ),
                     label: "需手动：检查网关配置".into(),
                 })
             } else {
                 None
             },
             scope,
+            ..Default::default()
         }
     }
 
@@ -340,6 +452,7 @@ impl Diagnoser {
                 detail: format!("存在默认路由，下一跳 {}", p.next_hop),
                 fix: None,
                 scope: p.active_adapter().map(|a| a.name.clone()),
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -349,10 +462,13 @@ impl Diagnoser {
                 status: Status::Error,
                 detail: "未发现默认路由（0.0.0.0/0），外网流量无出口。".into(),
                 fix: Some(Fix {
-                    kind: FixKind::Manual("检查是否已获取 IP 与网关；若为静态 IP，确认已配置网关。".into()),
+                    kind: FixKind::Manual(
+                        "检查是否已获取 IP 与网关；若为静态 IP，确认已配置网关。".into(),
+                    ),
                     label: "需手动：配置默认网关".into(),
                 }),
                 scope: None,
+                ..Default::default()
             }
         }
     }
@@ -369,13 +485,18 @@ impl Diagnoser {
                 detail: "无默认网关，无法测试网关连通。".into(),
                 fix: None,
                 scope,
+                ..Default::default()
             };
         }
         CheckResult {
             id: "gateway_ping",
             name: "网关连通性".into(),
             layer,
-            status: if dynr.gateway_ping { Status::Ok } else { Status::Error },
+            status: if dynr.gateway_ping {
+                Status::Ok
+            } else {
+                Status::Error
+            },
             detail: if dynr.gateway_ping {
                 format!("网关 {} 可达。", p.gateway)
             } else {
@@ -385,11 +506,14 @@ impl Diagnoser {
                 None
             } else {
                 Some(Fix {
-                    kind: FixKind::Manual("检查网线 / 无线连接、路由器 / 交换机是否通电正常。".into()),
+                    kind: FixKind::Manual(
+                        "检查网线 / 无线连接、路由器 / 交换机是否通电正常。".into(),
+                    ),
                     label: "需手动：检查物理链路与网关设备".into(),
                 })
             },
             scope,
+            ..Default::default()
         }
     }
 
@@ -414,6 +538,7 @@ impl Diagnoser {
                 })
             },
             scope: p.active_adapter().map(|a| a.name.clone()),
+            ..Default::default()
         }
     }
 
@@ -438,10 +563,14 @@ impl Diagnoser {
                 status: Status::Warn,
                 detail,
                 fix: Some(Fix {
-                    kind: FixKind::Manual("若未使用代理却无法上网，请关闭系统代理：设置 → 网络和 Internet → 代理。".into()),
+                    kind: FixKind::Manual(
+                        "若未使用代理却无法上网，请关闭系统代理：设置 → 网络和 Internet → 代理。"
+                            .into(),
+                    ),
                     label: "需手动：检查并关闭异常代理".into(),
                 }),
                 scope: None,
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -452,6 +581,7 @@ impl Diagnoser {
                 detail: "未检测到异常系统代理。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             }
         }
     }
@@ -474,6 +604,7 @@ impl Diagnoser {
                 detail: "未发现启用的虚拟 / VPN 网卡干扰。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             };
         }
 
@@ -489,7 +620,10 @@ impl Diagnoser {
         } else {
             (
                 Status::Warn,
-                format!("检测到启用的虚拟网卡：{}（仅供参考，不计入上网判定）。", virtual_nics.join("、")),
+                format!(
+                    "检测到启用的虚拟网卡：{}（仅供参考，不计入上网判定）。",
+                    virtual_nics.join("、")
+                ),
             )
         };
 
@@ -508,6 +642,7 @@ impl Diagnoser {
                 None
             },
             scope: None,
+            ..Default::default()
         }
     }
 
@@ -524,6 +659,7 @@ impl Diagnoser {
                 detail: "未发现状态异常的网络设备驱动。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -531,12 +667,16 @@ impl Diagnoser {
                 name: "网卡驱动状态".into(),
                 layer,
                 status: Status::Error,
-                detail: format!("发现异常网络设备：{}（驱动缺失或错误）。", p.problem_devices.join("、")),
+                detail: format!(
+                    "发现异常网络设备：{}（驱动缺失或错误）。",
+                    p.problem_devices.join("、")
+                ),
                 fix: Some(Fix {
                     kind: FixKind::Manual("在设备管理器更新 / 重装对应网卡驱动。".into()),
                     label: "需手动：更新网卡驱动".into(),
                 }),
                 scope: None,
+                ..Default::default()
             }
         }
     }
@@ -552,18 +692,25 @@ impl Diagnoser {
                 detail: format!("网卡「{}」物理链路已连接（Up）。", a.name),
                 fix: None,
                 scope: Some(a.name.clone()),
+                ..Default::default()
             },
             Some(a) => CheckResult {
                 id: "link_status",
                 name: "物理链路状态".into(),
                 layer,
                 status: Status::Error,
-                detail: format!("网卡「{}」物理链路断开（{}），可能是网线脱落 / 无线断开 / 网卡损坏。", a.name, a.status),
+                detail: format!(
+                    "网卡「{}」物理链路断开（{}），可能是网线脱落 / 无线断开 / 网卡损坏。",
+                    a.name, a.status
+                ),
                 fix: Some(Fix {
-                    kind: FixKind::Manual("检查网线是否插好、无线是否连接、网卡指示灯是否亮。".into()),
+                    kind: FixKind::Manual(
+                        "检查网线是否插好、无线是否连接、网卡指示灯是否亮。".into(),
+                    ),
                     label: "需手动：检查物理连接".into(),
                 }),
                 scope: Some(a.name.clone()),
+                ..Default::default()
             },
             None => CheckResult {
                 id: "link_status",
@@ -573,6 +720,7 @@ impl Diagnoser {
                 detail: "无当前上网网卡，跳过物理链路检测。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             },
         }
     }
@@ -588,6 +736,7 @@ impl Diagnoser {
                 detail: "未能读取 MTU。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             };
         }
         if p.mtu < 1280 {
@@ -602,6 +751,7 @@ impl Diagnoser {
                     label: "需手动：调整 MTU".into(),
                 }),
                 scope: p.active_adapter().map(|a| a.name.clone()),
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -612,6 +762,7 @@ impl Diagnoser {
                 detail: format!("当前 MTU {}，正常。", p.mtu),
                 fix: None,
                 scope: p.active_adapter().map(|a| a.name.clone()),
+                ..Default::default()
             }
         }
     }
@@ -629,6 +780,7 @@ impl Diagnoser {
                 detail: "公网地址 223.5.5.5 可达，出口链路正常。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             }
         } else if dynr.gateway_ping {
             CheckResult {
@@ -638,10 +790,13 @@ impl Diagnoser {
                 status: Status::Error,
                 detail: "局域网可达但公网不通，问题可能在路由器 / 光猫 / 运营商链路。".into(),
                 fix: Some(Fix {
-                    kind: FixKind::Manual("重启路由器 / 光猫；仍不通则联系运营商（宽带欠费 / 线路故障）。".into()),
+                    kind: FixKind::Manual(
+                        "重启路由器 / 光猫；仍不通则联系运营商（宽带欠费 / 线路故障）。".into(),
+                    ),
                     label: "需手动：重启光猫路由器或联系运营商".into(),
                 }),
                 scope: None,
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -652,6 +807,7 @@ impl Diagnoser {
                 detail: "局域网与公网均不可达，先排查本机与局域网链路。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             }
         }
     }
@@ -664,12 +820,16 @@ impl Diagnoser {
                 name: "病毒 / 威胁".into(),
                 layer,
                 status: Status::Error,
-                detail: format!("Windows Defender 检测到 {} 个威胁，可能导致网络异常。", p.threat_count),
+                detail: format!(
+                    "Windows Defender 检测到 {} 个威胁，可能导致网络异常。",
+                    p.threat_count
+                ),
                 fix: Some(Fix {
                     kind: FixKind::Manual("运行 Windows 安全中心全盘扫描并清除威胁。".into()),
                     label: "需手动：查杀病毒".into(),
                 }),
                 scope: None,
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -680,6 +840,7 @@ impl Diagnoser {
                 detail: "未检测到活跃威胁。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             }
         }
     }
@@ -692,12 +853,18 @@ impl Diagnoser {
                 name: "二层环路风险".into(),
                 layer,
                 status: Status::Warn,
-                detail: format!("检测到 {} 条默认路由（多出口），若伴随网络卡顿需排查环路 / 冗余链路。", p.route_count),
+                detail: format!(
+                    "检测到 {} 条默认路由（多出口），若伴随网络卡顿需排查环路 / 冗余链路。",
+                    p.route_count
+                ),
                 fix: Some(Fix {
-                    kind: FixKind::Manual("检查交换机是否成环；冗余链路需启用生成树协议（STP）。".into()),
+                    kind: FixKind::Manual(
+                        "检查交换机是否成环；冗余链路需启用生成树协议（STP）。".into(),
+                    ),
                     label: "需手动：排查环路 / 启用 STP".into(),
                 }),
                 scope: None,
+                ..Default::default()
             }
         } else {
             CheckResult {
@@ -708,6 +875,7 @@ impl Diagnoser {
                 detail: "未发现明显环路 / 多出口特征。".into(),
                 fix: None,
                 scope: None,
+                ..Default::default()
             }
         }
     }
@@ -728,6 +896,7 @@ impl Diagnoser {
                 label: "需手动：检查路由器 MAC 过滤".into(),
             }),
             scope: None,
+            ..Default::default()
         }
     }
 }
@@ -769,10 +938,12 @@ pub async fn ping_ok(host: &str) -> bool {
     }
     let host = host.to_string();
     tokio::task::spawn_blocking(move || {
-        let out = run("ping", &["-n", "1", "-w", "1000", &host], std::time::Duration::from_secs(6));
-        out.success
-            || out.stdout.to_lowercase().contains("ttl=")
-            || out.stdout.contains("TTL=")
+        let out = run(
+            "ping",
+            &["-n", "1", "-w", "1000", &host],
+            std::time::Duration::from_secs(6),
+        );
+        out.success || out.stdout.to_lowercase().contains("ttl=") || out.stdout.contains("TTL=")
     })
     .await
     .unwrap_or(false)
@@ -797,7 +968,11 @@ pub async fn traceroute(host: &str) -> Vec<String> {
             .map(|l| l.trim().to_string())
             .filter(|l| {
                 !l.is_empty()
-                    && (l.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                    && (l
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false)
                         || l.contains('*')
                         || l.contains("超过")
                         || l.contains("over")
@@ -820,8 +995,12 @@ mod tests {
             layer: Layer::Basic,
             status,
             detail: String::new(),
-            fix: fix.map(|k| Fix { kind: k, label: "x".into() }),
+            fix: fix.map(|k| Fix {
+                kind: k,
+                label: "x".into(),
+            }),
             scope: None,
+            ..Default::default()
         }
     }
 

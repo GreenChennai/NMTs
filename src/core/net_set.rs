@@ -93,6 +93,16 @@ pub fn add_dns(iface: &str, dns: &str) -> CmdOutput {
     netsh::run_netsh(&["interface", "ip", "add", "dns", iface, dns, "index=2"])
 }
 
+/// 设置静态 IPv6 DNS（主）。
+pub fn set_dns_v6(iface: &str, dns: &str) -> CmdOutput {
+    netsh::set_dns_v6(iface, dns)
+}
+
+/// 追加备用 IPv6 DNS。
+pub fn add_dns_v6(iface: &str, dns: &str) -> CmdOutput {
+    netsh::add_dns_v6(iface, dns)
+}
+
 /// DNS 切回 DHCP。
 pub fn set_dns_dhcp(iface: &str) -> CmdOutput {
     netsh::set_dns_dhcp(iface)
@@ -128,7 +138,8 @@ pub fn set_ipv6(enabled: bool) -> CmdOutput {
 
 /// 查询 IPv6 是否启用（注册表 DisabledComponents）。
 pub fn ipv6_enabled() -> bool {
-    let script = "$d=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters' \
+    let script =
+        "$d=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters' \
                   -Name DisabledComponents -ErrorAction SilentlyContinue).DisabledComponents; \
                   [PSCustomObject]@{ v=[int]$d } | ConvertTo-Json -Compress";
     let Some(json) = powershell::run_ps_json(script) else {
