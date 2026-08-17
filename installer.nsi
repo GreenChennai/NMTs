@@ -2,7 +2,7 @@
 ; 由 GitHub Actions 在 Windows runner 上构建后调用 makensis 生成安装包
 
 !define APP_NAME "NMTs"
-!define APP_VERSION "3.0.2"
+!define APP_VERSION "3.0.3"
 !define APP_PUBLISHER "GreenChennai"
 
 Name "${APP_NAME} ${APP_VERSION}"

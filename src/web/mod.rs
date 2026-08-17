@@ -44,12 +44,21 @@ pub fn start_editor(
     to_ui: UnboundedSender<EditorMsg>,
     rt: tokio::runtime::Handle,
 ) -> Result<EditorServer> {
-    let (listener, port) = bind_free_port()?;
+    let (std_listener, port) = bind_free_port()?;
     let shutdown = Arc::new(AtomicBool::new(false));
     let shared = Arc::new(tokio::sync::Mutex::new(initial));
 
     let sd = shutdown.clone();
+    // 关键：TcpListener::from_std 必须在 reactor 上下文（tokio task 内）调用，
+    // 否则主线程（同步 TUI 循环，不在 runtime 内）会 panic "no reactor running"。
     let handle = rt.spawn(async move {
+        let listener = match TcpListener::from_std(std_listener) {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!("编辑器监听转换失败：{e}");
+                return;
+            }
+        };
         loop {
             if sd.load(Ordering::SeqCst) {
                 break;
@@ -82,15 +91,14 @@ pub struct EditorServer {
     pub handle: JoinHandle<()>,
 }
 
-/// 在 127.0.0.1 的 18765..18800 区间找一个空闲端口。
-fn bind_free_port() -> Result<(TcpListener, u16)> {
+/// 在 127.0.0.1 的 18765..18800 区间找一个空闲端口（纯 std，无需 reactor）。
+fn bind_free_port() -> Result<(std::net::TcpListener, u16)> {
     for port in 18765..18800u16 {
         let addr = format!("127.0.0.1:{port}");
         match std::net::TcpListener::bind(&addr) {
             Ok(std_l) => {
                 std_l.set_nonblocking(true).ok();
-                let tl = TcpListener::from_std(std_l)?;
-                return Ok((tl, port));
+                return Ok((std_l, port));
             }
             Err(_) => continue,
         }
@@ -455,6 +463,31 @@ mod tests {
             buf.extend_from_slice(&chunk[..n]);
         }
         String::from_utf8_lossy(&buf).to_string()
+    }
+
+    /// 回归测试（V3.0.3）：在主线程「无 reactor 上下文」直接调用 start_editor
+    /// 必须返回 Ok 且不 panic。原实现会在主线程调用 TcpListener::from_std 触发
+    /// "there is no reactor running" 崩溃；修复后绑定只用 std，from_std 在
+    /// rt.spawn 任务内执行。
+    #[test]
+    fn start_editor_without_runtime_context_does_not_panic() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<EditorMsg>();
+        // 构造一个真实 runtime 的 handle，但在当前（非 runtime）线程调用 start_editor。
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+        // 当前线程不在 runtime 内（drop 了 BlockOn 作用域），直接同步调用：
+        let srv = start_editor(demo_topology(), tx, handle);
+        assert!(srv.is_ok(), "主线程无 reactor 调用 start_editor 应成功");
+        let srv = srv.unwrap();
+        // 让 spawn 任务有机会执行 from_std（不报错即证明没 panic）。
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        srv.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        srv.handle.abort();
+        rt.shutdown_background();
     }
 }
 

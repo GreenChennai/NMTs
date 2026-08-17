@@ -515,6 +515,7 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         let mut terminal = ratatui::init();
         terminal.clear()?;
+        tracing::info!("TUI 已初始化，进入主循环");
         // 非输入态禁用输入法（V3.0 P2）：单字母热键不被组字窗拦截。
         ime::disable_ime();
 
@@ -538,6 +539,7 @@ impl App {
         ime::enable_ime();
         self.stop_editor();
         ratatui::restore();
+        tracing::info!("NMTs 已退出");
         Ok(())
     }
 
@@ -1639,12 +1641,14 @@ impl App {
                 self.editor_shutdown = Some(srv.shutdown);
                 self.editor_handle = Some(srv.handle);
                 Self::open_browser(srv.port);
+                tracing::info!("拓扑编辑器已启动，监听端口 {}", srv.port);
                 self.topo.status = Some(format!(
                     "已启动内置拓扑编辑器 → http://127.0.0.1:{}/ （编辑实时同步回 NMTs）",
                     srv.port
                 ));
             }
             Err(err) => {
+                tracing::error!("拓扑编辑器启动失败：{err}");
                 self.topo.status = Some(format!("编辑器启动失败：{err}"));
             }
         }

@@ -1,5 +1,11 @@
 # NMTs 发布说明
 
+## v3.0.3（日志修复 + 编辑器启动 panic 修复）
+
+- 修复：日志文件名无后缀问题——原 `rolling::daily(..., "nmts")` 生成 `nmts.YYYY-MM-DD`（无 `.log`，系统无法识别），改为 `nmts.log.YYYY-MM-DD`（标准滚动文件名，系统可识别为日志）。
+- 修复：日志始终为空、崩溃无记录——全代码此前从未调用 `tracing` 日志宏；现已补齐启动 / 退出 / 编辑器启动与失败等关键路径日志，并新增**全局 panic hook**：任何崩溃都会写入 `logs/nmts.log.YYYY-MM-DD` 并保留原始 stack（仍由默认 hook 打印到终端）。
+- 修复：打开网页拓扑编辑器即 panic `there is no reactor running`——根因是 `start_editor` 在主线程（同步 TUI 循环）直接调用 `TcpListener::from_std`，该调用需在 tokio reactor 上下文执行。改为端口绑定只用 `std::net`，`from_std` 移到 `rt.spawn` 任务内执行，主线程不再触碰 reactor。
+
 ## v3.0.2（拓扑编辑器架构重构：内置后端 + 实时同步）
 
 - 架构重构：拓扑编辑器由「外置 pywebview 窗口 + CDN React Flow」改为 **NMTs 内嵌 HTTP + WebSocket 服务**（后端）+ **自包含纯 JS SVG 编辑器**（前端，零 CDN / 零 pywebview / 零 Node 构建）。
