@@ -289,8 +289,9 @@ pub struct TopoState {
 }
 
 /// 二级菜单操作项。
-pub const TOPO_MENU: [&str; 5] = [
-    "打开编辑",
+pub const TOPO_MENU: [&str; 6] = [
+    "打开编辑器",
+    "设备与 CLI（下发）",
     "重命名",
     "复制一份",
     "导出（D2/SVG/CLI）",
@@ -1401,14 +1402,17 @@ impl App {
     /// 模块四：执行二级菜单动作。
     fn topo_menu_action(&mut self, idx: usize) {
         match idx {
-            0 => {
+            // 打开编辑器：直接启动网页编辑器（不再进入设备列表）
+            0 => self.topo_open_editor(),
+            // 设备与 CLI：进入三级详情（CLI 推导 + 下发）
+            1 => {
                 self.topo.mode = TopoMode::Detail;
                 self.topo.dev_idx = 0;
             }
-            1 => self.topo_rename(),
-            2 => self.topo_copy(),
-            3 => self.topo_export_d2(),
-            4 => self.topo_delete(),
+            2 => self.topo_rename(),
+            3 => self.topo_copy(),
+            4 => self.topo_export_d2(),
+            5 => self.topo_delete(),
             _ => {}
         }
     }
@@ -1598,12 +1602,30 @@ impl App {
             return;
         }
         let editor_py = root.join("editor").join("editor.py");
-        let _ = std::process::Command::new("python")
+        let html = root.join("editor").join("topology_editor.html");
+
+        // 优先 python + pywebview 窗口；无 python 则回退系统默认浏览器打开 HTML
+        let spawned = std::process::Command::new("python")
             .arg(editor_py.to_str().unwrap_or("editor.py"))
             .arg(json_path.to_str().unwrap_or("topology.json"))
             .spawn();
-        self.topo.status =
-            Some("已启动拓扑编辑器（需 pip install pywebview），编辑后按 B 回读".into());
+        match spawned {
+            Ok(_) => {
+                self.topo.status = Some(
+                    "已启动拓扑编辑器（有 pywebview 走窗口，否则自动用浏览器）".into(),
+                );
+            }
+            Err(_) => {
+                let html_s = html.to_str().unwrap_or("topology_editor.html").to_string();
+                let opened = std::process::Command::new("cmd")
+                    .args(["/c", "start", "", &html_s])
+                    .spawn();
+                self.topo.status = Some(match opened {
+                    Ok(_) => "已用默认浏览器打开拓扑编辑器".into(),
+                    Err(_) => "无法启动编辑器（缺 python 且浏览器打开失败）".into(),
+                });
+            }
+        }
     }
 
     /// 模块四：回读 topology.json（更新当前拓扑 + 重新预检）。
