@@ -1,4 +1,4 @@
-//! 模块二：快捷设置（V3.0 结构化面板：IPv4/IPv6 开关 + 表单 + MAC + 高级设置）。
+//! 模块二：快捷设置（V3.0.5：IPv4/IPv6 左右布局 + 高级横向常驻 + 手动保存）。
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -6,8 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, QsRow, ADVANCED_ACTIONS, IP_FIELD_LABELS};
-use crate::ui::widgets::{scroll_list, toggle_line};
+use crate::app::{App, QsRow, QS_BTN_COUNT};
+use crate::ui::widgets::toggle_line;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     // DNS 优选交互模式：整屏展示可交互排名表
@@ -16,12 +16,43 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let chunks = Layout::vertical([Constraint::Length(2), Constraint::Min(4)]).split(area);
+    // 整块外框，内部按区域竖向切分（IPv4/IPv6 列在中间横向并排）。
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 快捷设置面板（修改后按「保存设置」手动应用） ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(2), // 顶部：当前网卡 + 提示
+        Constraint::Length(1), // 切换当前网卡（可选 + 可切换）
+        Constraint::Min(8),    // IPv4 | IPv6 左右双列
+        Constraint::Length(1), // MAC（只读）
+        Constraint::Length(3), // 高级设置（横向常驻，默认展开）
+        Constraint::Length(3), // 底部操作按钮
+        Constraint::Length(1), // 结果提示
+    ])
+    .split(inner);
+
     draw_header(f, app, chunks[0]);
-    draw_panel(f, app, chunks[1]);
+    draw_adapter_switch(f, app, chunks[1]);
+    draw_ip_columns(f, app, chunks[2]);
+    draw_mac(f, app, chunks[3]);
+    draw_advanced(f, app, chunks[4]);
+    draw_buttons(f, app, chunks[5]);
+    draw_result(f, app, chunks[6]);
 }
 
-/// 顶部：当前网卡状态条 + 提示。
+/// 焦点前缀：选中显示 ▶，否则留空。
+fn focus_prefix(focused: bool) -> &'static str {
+    if focused {
+        " ▶ "
+    } else {
+        "   "
+    }
+}
+
+/// 顶部：当前网卡状态条 + 操作提示。
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
 
@@ -60,9 +91,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             " 编辑中：输入数字/点/冒号 · Enter 应用 · Esc 取消",
             Style::default().fg(Color::Cyan),
         )
+    } else if app.quick_set.dirty {
+        Span::styled(
+            " 有未保存修改 · ←/→ 切换列 · Enter 切换/编辑/执行",
+            Style::default().fg(Color::Yellow),
+        )
     } else {
         Span::styled(
-            " ↑/↓ 移动焦点 · Enter 切换/编辑/执行",
+            " ↑/↓ 移动焦点 · ←/→ 切换 IPv4/IPv6 列 · Enter 切换/编辑/执行",
             Style::default().fg(Color::DarkGray),
         )
     };
@@ -72,20 +108,11 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_panel(f: &mut Frame, app: &App, area: Rect) {
-    let qs = &app.quick_set;
-    let on = app.ipv6_on;
-    let cur = qs.current_row(on);
+/// 切换当前网卡：可选（有焦点标记）+ 可切换（Enter 循环）。
+fn draw_adapter_switch(f: &mut Frame, app: &App, area: Rect) {
+    let cur = app.quick_set.current_row(app.ipv6_on);
+    let focused = cur == QsRow::AdapterSwitch;
 
-    let mut lines: Vec<Line> = Vec::new();
-    // 记录「可聚焦行」对应的行号，用于自动滚动使焦点始终可见。
-    let mut focus_map: Vec<(usize, QsRow)> = Vec::new();
-    let mut push_focus = |lines: &mut Vec<Line>, row: QsRow, line: Line<'static>| {
-        focus_map.push((lines.len(), row));
-        lines.push(line);
-    };
-
-    // ---- 切换当前网卡 ----
     let name = app
         .active_adapter
         .as_ref()
@@ -96,8 +123,17 @@ fn draw_panel(f: &mut Frame, app: &App, area: Rect) {
         .as_ref()
         .map(|a| a.kind_label())
         .unwrap_or("");
-    let adapter_line = Line::from(vec![
-        Span::styled(" 切换当前网卡 ", Style::default().fg(Color::DarkGray)),
+
+    let line = Line::from(vec![
+        Span::styled(
+            focus_prefix(focused),
+            if focused {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
+        ),
+        Span::styled("切换当前网卡 ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("[{name}]"),
             Style::default()
@@ -110,110 +146,151 @@ fn draw_panel(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled("  ⏎ 切换", Style::default().fg(Color::Yellow)),
     ]);
-    push_focus(&mut lines, QsRow::AdapterSwitch, adapter_line);
+    f.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), area);
+}
 
-    // ---- IPv4 ----
-    lines.push(section(" IPv4 "));
-    push_focus(
-        &mut lines,
-        QsRow::Ipv4Toggle,
-        focus_line(toggle_line("静态 IP / DHCP", qs.ipv4_static), cur == QsRow::Ipv4Toggle),
-    );
-    for i in 0..5 {
-        let editing = qs.editing && !qs.editing_v6 && qs.field_idx == i;
-        let readonly = !qs.ipv4_static;
-        let line = field_line(
-            IP_FIELD_LABELS[i],
-            &qs.ipv4_fields[i],
-            cur == QsRow::Ipv4Field(i),
-            editing,
-            readonly,
-        );
-        if !readonly {
-            push_focus(&mut lines, QsRow::Ipv4Field(i), line);
-        } else {
-            lines.push(line);
-        }
-    }
+/// IPv4 / IPv6 左右双列。
+fn draw_ip_columns(f: &mut Frame, app: &App, area: Rect) {
+    let columns = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    draw_ip_block(f, app, columns[0], false);
+    draw_ip_block(f, app, columns[1], true);
+}
 
-    // ---- IPv6 ----
-    lines.push(section(" IPv6 "));
-    if on {
-        push_focus(
-            &mut lines,
-            QsRow::Ipv6Toggle,
-            focus_line(toggle_line("开启 / 关闭", on), cur == QsRow::Ipv6Toggle),
-        );
-        push_focus(
-            &mut lines,
-            QsRow::Ipv6Mode,
-            focus_line(
-                toggle_line("静态 / 自动获取", qs.ipv6_static),
-                cur == QsRow::Ipv6Mode,
-            ),
-        );
+/// 单列渲染（v6=true 渲染 IPv6，否则 IPv4）。
+fn draw_ip_block(f: &mut Frame, app: &App, area: Rect, v6: bool) {
+    let qs = &app.quick_set;
+    let on = app.ipv6_on;
+    let cur = qs.current_row(on);
+
+    let mut lines: Vec<Line> = vec![section(if v6 { " IPv6 " } else { " IPv4 " })];
+
+    if !v6 {
+        lines.push(focus_line(
+            toggle_line("静态 IP / DHCP", qs.ipv4_static),
+            cur == QsRow::Ipv4Toggle,
+        ));
         for i in 0..5 {
-            let editing = qs.editing && qs.editing_v6 && qs.field_idx == i;
-            let readonly = !qs.ipv6_static;
-            let line = field_line(
-                IP_FIELD_LABELS[i],
-                &qs.ipv6_fields[i],
-                cur == QsRow::Ipv6Field(i),
+            let editing = qs.editing && !qs.editing_v6 && qs.field_idx == i;
+            let readonly = !qs.ipv4_static;
+            lines.push(field_line(
+                crate::app::IP_FIELD_LABELS[i],
+                &qs.ipv4_fields[i],
+                cur == QsRow::Ipv4Field(i),
                 editing,
                 readonly,
-            );
-            if !readonly {
-                push_focus(&mut lines, QsRow::Ipv6Field(i), line);
-            } else {
-                lines.push(line);
+            ));
+        }
+    } else {
+        lines.push(focus_line(
+            toggle_line("开启 / 关闭", on),
+            cur == QsRow::Ipv6Toggle,
+        ));
+        if on {
+            lines.push(focus_line(
+                toggle_line("静态 / 自动获取", qs.ipv6_static),
+                cur == QsRow::Ipv6Mode,
+            ));
+            for i in 0..5 {
+                let editing = qs.editing && qs.editing_v6 && qs.field_idx == i;
+                let readonly = !qs.ipv6_static;
+                lines.push(field_line(
+                    crate::app::IP_FIELD_LABELS[i],
+                    &qs.ipv6_fields[i],
+                    cur == QsRow::Ipv6Field(i),
+                    editing,
+                    readonly,
+                ));
             }
+        } else {
+            lines.push(gray("   （本机未启用 IPv6）"));
         }
-    } else {
-        push_focus(
-            &mut lines,
-            QsRow::Ipv6Toggle,
-            focus_line(toggle_line("开启 / 关闭", false), cur == QsRow::Ipv6Toggle),
-        );
-        lines.push(gray("   （本机未启用 IPv6，开关灰显）"));
     }
 
-    // ---- MAC ----
-    lines.push(section(" MAC 地址（只读） "));
-    if app.current_mac.is_empty() {
-        lines.push(gray("   （未获取，等待环境探测）"));
-    } else {
-        lines.push(normal(format!("   {}", app.current_mac)));
-    }
-
-    // ---- 高级设置 ----
-    let adv_title = if qs.advanced_open {
-        " 高级设置 ▾"
-    } else {
-        " 高级设置 ▸"
-    };
-    push_focus(
-        &mut lines,
-        QsRow::AdvancedToggle,
-        focus_line(
-            Line::from(Span::styled(
-                adv_title,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            cur == QsRow::AdvancedToggle,
-        ),
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }),
+        area,
     );
-    if qs.advanced_open {
-        for (i, (name, _)) in ADVANCED_ACTIONS.iter().enumerate() {
-            let line = adv_line(name, cur == QsRow::AdvancedItem(i));
-            push_focus(&mut lines, QsRow::AdvancedItem(i), line);
+}
+
+/// MAC 地址（只读）。
+fn draw_mac(f: &mut Frame, app: &App, area: Rect) {
+    let line = if app.current_mac.is_empty() {
+        gray("   MAC：（未获取，等待环境探测）")
+    } else {
+        normal(format!("   MAC：{}", app.current_mac))
+    };
+    f.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), area);
+}
+
+/// 高级设置：独立分割窗，选项从左到右排布，默认全部展开（无合并选项）。
+fn draw_advanced(f: &mut Frame, app: &App, area: Rect) {
+    let cur = app.quick_set.current_row(app.ipv6_on);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 高级设置（默认展开） ");
+
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    for (i, (name, _)) in crate::app::ADVANCED_ACTIONS.iter().enumerate() {
+        let focused = cur == QsRow::AdvancedItem(i);
+        if focused {
+            spans.push(Span::styled(
+                format!(" ▶ {name} "),
+                Style::default().fg(Color::Black).bg(Color::Cyan),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!(" {name} "),
+                Style::default().fg(Color::White),
+            ));
         }
+        spans.push(Span::raw("  "));
     }
 
-    // ---- 结果 ----
-    if let Some(r) = &qs.result {
-        lines.push(Line::from(""));
+    let p = Paragraph::new(Line::from(spans))
+        .block(block)
+        .wrap(Wrap { trim: true });
+    f.render_widget(p, area);
+}
+
+/// 底部四个操作按钮。
+fn draw_buttons(f: &mut Frame, app: &App, area: Rect) {
+    let cur = app.quick_set.current_row(app.ipv6_on);
+    let dirty = app.quick_set.dirty;
+    let labels = ["保存设置", "恢复默认", "保存备份", "从备份恢复"];
+    // 保存设置 / 恢复默认 在未修改时灰色禁用（仍显示）。
+    let disabled = [!dirty, !dirty, false, false];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 操作（Enter 执行） ");
+
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    for i in 0..QS_BTN_COUNT {
+        let focused = cur == QsRow::Button(i);
+        let txt = format!(" [ {} ] ", labels[i]);
+        if disabled[i] {
+            spans.push(Span::styled(txt, Style::default().fg(Color::DarkGray)));
+        } else if focused {
+            spans.push(Span::styled(
+                txt,
+                Style::default().fg(Color::Black).bg(Color::Cyan),
+            ));
+        } else {
+            spans.push(Span::styled(txt, Style::default().fg(Color::White)));
+        }
+        spans.push(Span::raw(" "));
+    }
+
+    let p = Paragraph::new(Line::from(spans))
+        .block(block)
+        .wrap(Wrap { trim: true });
+    f.render_widget(p, area);
+}
+
+/// 结果提示（按状态着色 + 自动换行）。
+fn draw_result(f: &mut Frame, app: &App, area: Rect) {
+    if let Some(r) = &app.quick_set.result {
         let color = if r.starts_with('✓') {
             Color::Green
         } else if r.starts_with('✗') {
@@ -221,45 +298,15 @@ fn draw_panel(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Color::Yellow
         };
-        lines.push(Line::from(Span::styled(
-            format!(" {r}"),
-            Style::default().fg(color),
-        )));
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" {r}"),
+                Style::default().fg(color),
+            )))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
     }
-
-    // 自动滚动：让当前焦点行始终可见（边缘检测，避免内容被裁切）。
-    let inner_h = area.height.saturating_sub(2) as usize;
-    let total = lines.len();
-    let focused_line = focus_map
-        .iter()
-        .find(|(_, r)| *r == cur)
-        .map(|(i, _)| *i);
-    let mut scroll = qs.scroll;
-    if total > inner_h {
-        if let Some(fi) = focused_line {
-            let fi = fi as u16;
-            if fi < scroll {
-                scroll = fi;
-            } else if fi >= scroll + inner_h as u16 {
-                scroll = fi - inner_h as u16 + 1;
-            }
-            scroll = scroll.min((total - inner_h) as u16);
-        } else {
-            scroll = scroll.min((total - inner_h) as u16);
-        }
-    } else {
-        scroll = 0;
-    }
-
-    let p = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" 快捷设置面板 "),
-        )
-        .wrap(Wrap { trim: true })
-        .scroll((scroll, 0));
-    f.render_widget(p, area);
 }
 
 fn section(title: &str) -> Line<'static> {
@@ -287,7 +334,13 @@ fn focus_line(line: Line<'static>, focused: bool) -> Line<'static> {
 }
 
 /// 字段行。readonly=true 时灰显并标注「自动获取」，表示不可编辑。
-fn field_line(label: &str, val: &str, focused: bool, editing: bool, readonly: bool) -> Line<'static> {
+fn field_line(
+    label: &str,
+    val: &str,
+    focused: bool,
+    editing: bool,
+    readonly: bool,
+) -> Line<'static> {
     let marker = if editing {
         Span::styled(" ▸ ", Style::default().fg(Color::Black).bg(Color::Cyan))
     } else if focused {
@@ -301,10 +354,7 @@ fn field_line(label: &str, val: &str, focused: bool, editing: bool, readonly: bo
         } else {
             val.to_string()
         };
-        (
-            t,
-            Style::default().fg(Color::DarkGray),
-        )
+        (t, Style::default().fg(Color::DarkGray))
     } else if editing {
         (
             format!("{val}_"),
@@ -320,34 +370,21 @@ fn field_line(label: &str, val: &str, focused: bool, editing: bool, readonly: bo
     } else {
         (
             val.to_string(),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(if focused {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                }),
+            Style::default().fg(Color::White).add_modifier(if focused {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
         )
     };
     Line::from(vec![
         marker,
-        Span::styled(format!(" {label}: "), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {label}: "),
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::styled(val_txt, val_style),
     ])
-}
-
-fn adv_line(name: &str, focused: bool) -> Line<'static> {
-    if focused {
-        Line::from(vec![
-            Span::styled(" ▶ ", Style::default().fg(Color::Black).bg(Color::Cyan)),
-            Span::styled(name.to_string(), Style::default().fg(Color::White)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::raw("   "),
-            Span::styled(name.to_string(), Style::default().fg(Color::White)),
-        ])
-    }
 }
 
 fn gray(s: &str) -> Line<'static> {
@@ -387,7 +424,7 @@ fn draw_dns_table(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let selected = app.dns.selected;
-    scroll_list(
+    crate::ui::widgets::scroll_list(
         f,
         area,
         Block::default()

@@ -146,6 +146,11 @@ pub fn set_dns_dhcp(iface: &str) -> CmdOutput {
     netsh::set_dns_dhcp(iface)
 }
 
+/// IPv6 DNS 切回 DHCP（自动获取）。
+pub fn set_dns_v6_dhcp(iface: &str) -> CmdOutput {
+    netsh::set_dns_v6_dhcp(iface)
+}
+
 /// IP 切回 DHCP。
 pub fn set_ip_dhcp(iface: &str) -> CmdOutput {
     netsh::set_dhcp(iface)

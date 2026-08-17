@@ -33,7 +33,36 @@ pub fn toggle_line(label: &str, on: bool) -> Line<'static> {
     ])
 }
 
-/// 可滚动列表：`List` + 右侧 `Scrollbar`，自动保证选中项始终可见。
+/// 按显示宽度把一行文本折成多行（贪心断行，按字符切分）。
+fn wrap_text(s: &str, max: usize) -> Vec<String> {
+    if max == 0 {
+        return vec![s.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut w = 0usize;
+    for c in s.chars() {
+        let cw = if (c as u32) == 0x00
+            || (0x2000..=0x9fff).contains(&(c as u32))
+            || (0xff00..=0xffef).contains(&(c as u32))
+        {
+            2
+        } else {
+            1
+        };
+        if w + cw > max && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+            w = 0;
+        }
+        cur.push(c);
+        w += cw;
+    }
+    out.push(cur);
+    out
+}
+
+/// 可滚动列表：自动换行（边缘检测，超长内容不再顶出 UI）+ 右侧 `Scrollbar`，
+/// 选中项（含其所有折行）始终可见并以反色高亮。
 ///
 /// `selected` 为当前选中索引，`offset` 为可视区起始行（由本函数维护并回写）。
 pub fn scroll_list(
@@ -44,29 +73,57 @@ pub fn scroll_list(
     selected: usize,
     offset: &mut usize,
 ) {
+    let inner_w = area.width.saturating_sub(2) as usize; // 减去左右边框
     let inner_h = area.height.saturating_sub(2) as usize;
     if inner_h == 0 {
         return;
     }
-    let max_off = items.len().saturating_sub(inner_h);
-    if selected < *offset {
-        *offset = selected;
-    } else if selected >= offset.saturating_add(inner_h) {
-        *offset = selected + 1 - inner_h;
+
+    // 把每条原始项按宽度折成若干「可视行」，并记录其所属原始项索引。
+    let mut flat: Vec<(usize, String)> = Vec::new();
+    for (oi, s) in items.iter().enumerate() {
+        let lines = wrap_text(s, inner_w.max(1));
+        if lines.len() == 1 && lines[0].is_empty() {
+            flat.push((oi, String::new()));
+        } else {
+            for ln in lines {
+                flat.push((oi, ln));
+            }
+        }
+    }
+
+    // 选中项的第一条可视行必须可见。
+    let sel_first = flat
+        .iter()
+        .position(|(oi, _)| *oi == selected)
+        .unwrap_or(0);
+    let max_off = flat.len().saturating_sub(inner_h);
+    if sel_first < *offset {
+        *offset = sel_first;
+    } else if sel_first >= *offset + inner_h {
+        *offset = sel_first + 1 - inner_h;
     }
     *offset = (*offset).min(max_off);
 
-    let list_items: Vec<ListItem> = items.iter().map(|s| ListItem::new(s.clone())).collect();
-    let list = List::new(list_items)
-        .block(block)
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
+    // 仅渲染可视区内的可视行；属于选中项的整行反色高亮。
+    let list_items: Vec<ListItem> = flat
+        .iter()
+        .skip(*offset)
+        .take(inner_h)
+        .map(|(oi, s)| {
+            if *oi == selected {
+                ListItem::new(s.clone()).style(Style::default().fg(Color::Black).bg(Color::Cyan))
+            } else {
+                ListItem::new(s.clone())
+            }
+        })
+        .collect();
+    let list = List::new(list_items).block(block);
     let mut st = ListState::default();
-    st.select(Some(selected));
-    *st.offset_mut() = *offset;
+    st.select(None);
     f.render_stateful_widget(list, area, &mut st);
-    *offset = st.offset();
 
     let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-    let mut sbs = ScrollbarState::new(items.len()).position(*offset);
+    let mut sbs = ScrollbarState::new(flat.len()).position(*offset);
     f.render_stateful_widget(sb, area, &mut sbs);
 }

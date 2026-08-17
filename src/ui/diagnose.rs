@@ -59,7 +59,10 @@ fn draw_top(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Cyan),
         )
     };
-    f.render_widget(Paragraph::new(Line::from(vec![btn, hint])), rows[0]);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![btn, hint])).wrap(Wrap { trim: true }),
+        rows[0],
+    );
 
     let sep = "─".repeat(area.width as usize);
     f.render_widget(

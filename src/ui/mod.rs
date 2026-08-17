@@ -120,7 +120,7 @@ fn draw_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         spans.extend(admin.spans);
     }
 
-    let p = Paragraph::new(Line::from(spans));
+    let p = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
     f.render_widget(p, area);
 }
 
@@ -154,7 +154,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         left,
         Style::default().fg(Color::DarkGray),
     )]))
-    .block(Block::default().borders(Borders::TOP));
+    .block(Block::default().borders(Borders::TOP))
+    .wrap(Wrap { trim: true });
     f.render_widget(p, area);
 }
 
@@ -186,7 +187,9 @@ fn draw_help(f: &mut Frame, area: ratatui::layout::Rect) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  ↑/↓ 选字段/动作　Enter 切换/应用　Esc 退出表单"),
+        Line::from("  ↑/↓ 选字段/动作　←/→ 切换 IPv4/IPv6 列　Enter 切换/编辑/执行"),
+        Line::from("  修改不自动保存：按「保存设置」应用，或「恢复默认」回退到初次状态"),
+        Line::from("  「保存备份」归档本机配置　「从备份恢复」还原最近一份备份"),
         Line::from(""),
         Line::from(Span::styled(
             "  模块三 网工工具",
